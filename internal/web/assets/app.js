@@ -4,7 +4,6 @@ const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;',
 const quote = value => "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
 let state = {servers:[], nodes:[], clients:[]}, page = 'overview', publicURL = '', editor = null, timer = null, loading = false, selectedIDs = new Set();
 const names = {
- snell:["Snell 入站","独立管理 Snell v5 服务，与 Xray 共存。","Snell 入站"],
  outbounds:["出站管理","为每台服务器配置链式代理落地出口。","出站管理"],
  routing:["路由分流","按域名、IP、入站和端口选择出口。","路由分流"],
   settings:['后台设置','管理管理员账号和登录密码。','后台设置'],
@@ -136,10 +135,9 @@ function render() {
   const [title,description,crumb]=names[page];
   $('#page-title').textContent=title; $('#page-description').textContent=description; $('#crumb').textContent=crumb;
   document.querySelectorAll('[data-page]').forEach(b=>b.classList.toggle('active',b.dataset.page===page));
-  const routingPage=page==='outbounds'||page==='routing'||page==='snell';
+  const routingPage=page==='outbounds'||page==='routing';
   const notifications=page==='notifications'||page==='settings'||routingPage;
   $('#add-button').hidden=notifications; $('#metrics').hidden=notifications; $('.list-toolbar').hidden=notifications; $('#overview-guide').hidden=notifications;
-  if(page==='snell'){renderSnell();return;}
   if(routingPage){renderRouting();return;}
   if(page==='settings'){if(!$('#account-form'))loadAccountSettings();return;}
   if(notifications){if(!$('#telegram-form'))loadTelegramSettings();return;}

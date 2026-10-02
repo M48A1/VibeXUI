@@ -99,10 +99,6 @@ func New(db *store.Store, o Options) (*Server, error) {
 	mux.HandleFunc("DELETE /api/routing/rules/{id}", s.admin(s.deleteRouteRule))
 	mux.HandleFunc("PUT /api/servers/{id}/routing", s.admin(s.saveRouting))
 	mux.HandleFunc("PUT /api/servers/{id}/routing/rules/order", s.admin(s.orderRouteRules))
-	mux.HandleFunc("POST /api/snell", s.admin(s.saveSnell))
-	mux.HandleFunc("PUT /api/snell/{id}", s.admin(s.saveSnell))
-	mux.HandleFunc("DELETE /api/snell/{id}", s.admin(s.deleteSnell))
-	mux.HandleFunc("GET /api/snell/{id}/export", s.admin(s.exportSnell))
 	mux.HandleFunc("POST /api/nodes", s.admin(s.saveNode))
 	mux.HandleFunc("PATCH /api/nodes/{id}", s.admin(s.saveNode))
 	mux.HandleFunc("DELETE /api/nodes/{id}", s.admin(s.deleteNode))
@@ -282,9 +278,6 @@ func redact(st *model.State, keys bool) {
 		st.Servers[i].RegistrationHash = ""
 	}
 	if keys {
-		for i := range st.Snell {
-			st.Snell[i].PSK = ""
-		}
 		for i := range st.Outbounds {
 			st.Outbounds[i].Password = ""
 			st.Outbounds[i].UUID = ""
@@ -428,13 +421,6 @@ func (s *Server) deleteServer(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		st.Servers = servers
-		snells := []model.SnellInbound{}
-		for _, n := range st.Snell {
-			if n.ServerID != r.PathValue("id") {
-				snells = append(snells, n)
-			}
-		}
-		st.Snell = snells
 		outs := []model.Outbound{}
 		for _, o := range st.Outbounds {
 			if o.ServerID != r.PathValue("id") {
@@ -512,9 +498,6 @@ func (s *Server) saveNode(w http.ResponseWriter, r *http.Request) {
 	err := s.store.Update(func(st *model.State) error {
 		if serverAt(st, n.ServerID) == nil {
 			return fmt.Errorf("请先选择服务器")
-		}
-		if err := model.CheckSnellPort(*st, n.ServerID, n.Port); err != nil {
-			return err
 		}
 		id := r.PathValue("id")
 		if in.SourceNodeID != "" {
@@ -887,16 +870,6 @@ func (s *Server) poll(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "上报数据过长")
 		return
 	}
-	if len(in.SnellStatus) > 16 {
-		fail(w, 400, "Snell 状态过长")
-		return
-	}
-	for _, status := range in.SnellStatus {
-		if len(status.Error) > 1000 || len(status.State) > 32 {
-			fail(w, 400, "Snell 状态无效")
-			return
-		}
-	}
 	if !validKernelReport(in.Kernel) {
 		fail(w, 400, "内核状态无效")
 		return
@@ -922,17 +895,6 @@ func (s *Server) poll(w http.ResponseWriter, r *http.Request) {
 		v.Running = in.Running
 		v.XrayVersion = in.XrayVersion
 		v.Kernel = in.Kernel
-		v.SnellSupported = in.SnellSupported
-		v.SnellStatus = map[string]model.SnellStatus{}
-		task.Snell = []model.SnellInbound{}
-		for _, n := range st.Snell {
-			if n.ServerID == v.ID {
-				task.Snell = append(task.Snell, n)
-				if status, ok := in.SnellStatus[n.ID]; ok {
-					v.SnellStatus[n.ID] = status
-				}
-			}
-		}
 		task.Kernel = v.KernelTask
 		v.Error = in.Error
 		v.Upload = in.Upload

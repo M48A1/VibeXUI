@@ -74,9 +74,6 @@ func (s *Server) importNode(w http.ResponseWriter, r *http.Request) {
 		if serverAt(st, out.ServerID) == nil {
 			return fmt.Errorf("请选择目标服务器")
 		}
-		if err := model.CheckSnellPort(*st, out.ServerID, out.Port); err != nil {
-			return err
-		}
 		if len(st.Nodes) >= 1000 {
 			return fmt.Errorf("入站数量已达上限")
 		}

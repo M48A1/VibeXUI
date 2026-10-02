@@ -17,15 +17,13 @@ import (
 )
 
 type Server struct {
-	SnellSupported bool                   `json:"snellSupported"`
-	SnellStatus    map[string]SnellStatus `json:"snellStatus,omitempty"`
-	RestartVersion int64                  `json:"restartVersion"`
-	Routing        RoutingSettings        `json:"routing"`
-	KernelTask     *KernelTask            `json:"kernelTask,omitempty"`
-	Kernel         KernelReport           `json:"kernel"`
-	OnlineIPs      map[string][]string    `json:"onlineIPs,omitempty"`
-	IPStatsAt      time.Time              `json:"ipStatsAt"`
-	IPStatsError   string                 `json:"ipStatsError"`
+	RestartVersion int64               `json:"restartVersion"`
+	Routing        RoutingSettings     `json:"routing"`
+	KernelTask     *KernelTask         `json:"kernelTask,omitempty"`
+	Kernel         KernelReport        `json:"kernel"`
+	OnlineIPs      map[string][]string `json:"onlineIPs,omitempty"`
+	IPStatsAt      time.Time           `json:"ipStatsAt"`
+	IPStatsError   string              `json:"ipStatsError"`
 
 	ID                  string             `json:"id"`
 	Name                string             `json:"name"`
@@ -137,22 +135,19 @@ type Client struct {
 	ServerTraffic     map[string]Traffic `json:"serverTraffic,omitempty"`
 }
 type State struct {
-	Snell     []SnellInbound `json:"snell"`
-	Outbounds []Outbound     `json:"outbounds"`
-	Rules     []RouteRule    `json:"rules"`
-	Servers   []Server       `json:"servers"`
-	Nodes     []Node         `json:"nodes"`
-	Clients   []Client       `json:"clients"`
+	Outbounds []Outbound  `json:"outbounds"`
+	Rules     []RouteRule `json:"rules"`
+	Servers   []Server    `json:"servers"`
+	Nodes     []Node      `json:"nodes"`
+	Clients   []Client    `json:"clients"`
 }
 type Report struct {
-	SnellSupported   bool                   `json:"snellSupported"`
-	SnellStatus      map[string]SnellStatus `json:"snellStatus,omitempty"`
-	StatsCollectedAt time.Time              `json:"statsCollectedAt,omitempty"`
-	IPCollectedAt    time.Time              `json:"ipCollectedAt,omitempty"`
-	Kernel           KernelReport           `json:"kernel"`
-	NodeTraffic      map[string]Traffic     `json:"nodeTraffic,omitempty"`
-	OnlineIPs        map[string][]string    `json:"onlineIPs"`
-	IPStatsError     string                 `json:"ipStatsError"`
+	StatsCollectedAt time.Time           `json:"statsCollectedAt,omitempty"`
+	IPCollectedAt    time.Time           `json:"ipCollectedAt,omitempty"`
+	Kernel           KernelReport        `json:"kernel"`
+	NodeTraffic      map[string]Traffic  `json:"nodeTraffic,omitempty"`
+	OnlineIPs        map[string][]string `json:"onlineIPs"`
+	IPStatsError     string              `json:"ipStatsError"`
 
 	AppliedVersion int64              `json:"appliedVersion"`
 	Running        bool               `json:"running"`
@@ -165,7 +160,6 @@ type Report struct {
 	ClientTraffic  map[string]Traffic `json:"clientTraffic,omitempty"`
 }
 type Task struct {
-	Snell          []SnellInbound  `json:"snell"`
 	RestartVersion int64           `json:"restartVersion"`
 	Kernel         *KernelTask     `json:"kernel,omitempty"`
 	NodeIDs        []string        `json:"nodeIds"`

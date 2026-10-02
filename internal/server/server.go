@@ -25,6 +25,8 @@ import (
 type Options struct{ Username, Password, PublicURL, DownloadsDir string }
 type Server struct {
 	telegram                      *telegramNotifier
+	credentialVersion             uint64
+	credentialAttempts            []time.Time
 	store                         *store.Store
 	username, password, publicURL string
 	secure                        bool
@@ -64,10 +66,7 @@ func New(db *store.Store, o Options) (*Server, error) {
 		if err != nil {
 			return nil, err
 		}
-		if err = db.SetSetting("username", o.Username); err != nil {
-			return nil, err
-		}
-		if err = db.SetSetting("password", string(hash)); err != nil {
+		if err = db.SetCredentials(o.Username, string(hash)); err != nil {
 			return nil, err
 		}
 		s.username = o.Username
@@ -76,9 +75,8 @@ func New(db *store.Store, o Options) (*Server, error) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/login", s.login)
 	mux.HandleFunc("POST /api/logout", s.admin(s.logout))
-	mux.HandleFunc("GET /api/me", s.admin(func(w http.ResponseWriter, r *http.Request) {
-		respond(w, 200, map[string]any{"username": s.username, "publicURL": s.publicURL})
-	}))
+	mux.HandleFunc("GET /api/me", s.admin(s.accountInfo))
+	mux.HandleFunc("PUT /api/settings/account", s.admin(s.updateAccount))
 	mux.HandleFunc("GET /api/state", s.admin(s.state))
 	mux.HandleFunc("GET /api/notifications/telegram", s.admin(s.telegramGet))
 	mux.HandleFunc("PUT /api/notifications/telegram", s.admin(s.telegramSave))
@@ -199,15 +197,21 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.attempts = append(s.attempts, now)
+	username, password, version := s.username, s.password, s.credentialVersion
 	s.mu.Unlock()
-	err := bcrypt.CompareHashAndPassword([]byte(s.password), []byte(in.Password))
-	if subtle.ConstantTimeCompare([]byte(in.Username), []byte(s.username)) != 1 || err != nil {
+	err := bcrypt.CompareHashAndPassword([]byte(password), []byte(in.Password))
+	if subtle.ConstantTimeCompare([]byte(in.Username), []byte(username)) != 1 || err != nil {
 		s.notifyLogin(r, in.Username, false)
 		fail(w, 401, "用户名或密码错误")
 		return
 	}
 	token := model.Secret()
 	s.mu.Lock()
+	if s.credentialVersion != version {
+		s.mu.Unlock()
+		fail(w, 401, "账号已更新，请使用新账号密码登录")
+		return
+	}
 	for k, v := range s.sessions {
 		if now.After(v) {
 			delete(s.sessions, k)

@@ -4,6 +4,7 @@ const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;',
 const quote = value => "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
 let state = {servers:[], nodes:[], clients:[]}, page = 'overview', publicURL = '', editor = null, timer = null, loading = false, selectedIDs = new Set();
 const names = {
+  settings:['后台设置','管理管理员账号和登录密码。','后台设置'],
   notifications:['外部通知','通过 Telegram 接收运行状态、到期及流量提醒。','外部通知'],
   overview:['服务器总览','让服务器、入站和用户保持连接。','总览'],
   servers:['服务器','安装一个 Agent，在这里管理每一台 VPS。','服务器'],
@@ -24,6 +25,7 @@ function toast(message) {
   clearTimeout(toast.timeout); toast.timeout = setTimeout(() => $('#toast').hidden = true, 4000);
 }
 function showLogin() {
+  if(page==='settings')$('#workspace').innerHTML='';
   clearInterval(timer); timer = null;
   $('#app').hidden = true; $('#login').hidden = false;
   $('#login-form input[name=password]').value = '';
@@ -37,6 +39,7 @@ async function enter() {
   if (!timer) timer = setInterval(() => refresh().catch(e => {if (!$('#app').hidden) toast(e.message);}), 10000);
 }
 async function refresh() {
+  if(page==='settings'){if(!$('#account-form'))await loadAccountSettings();else await api('/api/me');return;}
   if (page === 'notifications') {await refreshTelegramStatus(); return;}
   if (loading) return;
   loading = true; $('#refresh-button').disabled = true;
@@ -127,8 +130,9 @@ function render() {
   const [title,description,crumb]=names[page];
   $('#page-title').textContent=title; $('#page-description').textContent=description; $('#crumb').textContent=crumb;
   document.querySelectorAll('[data-page]').forEach(b=>b.classList.toggle('active',b.dataset.page===page));
-  const notifications=page==='notifications';
+  const notifications=page==='notifications'||page==='settings';
   $('#add-button').hidden=notifications; $('#metrics').hidden=notifications; $('.list-toolbar').hidden=notifications; $('#overview-guide').hidden=notifications;
+  if(page==='settings'){if(!$('#account-form'))loadAccountSettings();return;}
   if(notifications){if(!$('#telegram-form'))loadTelegramSettings();return;}
   $('#add-button').textContent=page==='clients'?'＋ 添加用户':page==='nodes'?'＋ 添加入站':'＋ 添加服务器';
   $('#export-button').hidden=page!=='clients'; $('#batch-button').hidden=page!=='clients'; $('#import-button').hidden=page!=='nodes'; $('#cleanup-button').hidden=page!=='clients'; $('#group-filter').hidden=page!=='clients';
@@ -458,4 +462,42 @@ async function testTelegramSettings() {
   const button=$('#telegram-test'),output=$('#telegram-test-results');button.disabled=true;output.textContent='正在向已保存的 Chat ID 发送测试通知…';
   try {const data=await api('/api/notifications/telegram/test','POST',{});output.textContent=data.results.map(r=>`${r.chatId}：${r.result}`).join('\n');await refreshTelegramStatus();}
   catch(error){output.textContent=error.message;}finally{button.disabled=false;}
+}
+
+
+async function loadAccountSettings() {
+  $('#workspace').innerHTML='<div class="notice">正在读取后台设置…</div>';
+  try {
+    const me=await api('/api/me');if(page!=='settings')return;
+    $('#workspace').innerHTML=`<form id="account-form" class="panel notification-panel">
+      <div class="panel-title"><h2>管理员账号</h2></div>
+      <div class="notification-body">
+        <div class="notification-grid">
+          <label>管理员账号<input name="username" autocomplete="username" value="${esc(me.username)}" maxlength="64" required><small>不含空格，最多 64 字节。</small></label>
+          <label>当前密码<input name="currentPassword" type="password" autocomplete="current-password" required><small>修改账号或密码前均需验证。</small></label>
+          <label>新密码<input name="newPassword" type="password" autocomplete="new-password"><small>12–72 字节；留空表示仅修改账号。</small></label>
+          <label>确认新密码<input name="confirmPassword" type="password" autocomplete="new-password"></label>
+        </div>
+        <div class="notice">保存成功后，所有设备的登录会话都会失效，请使用新账号和密码重新登录。</div>
+        <p id="account-error" class="error" role="alert"></p>
+        <button class="primary" type="submit">保存并重新登录</button>
+      </div>
+    </form>`;
+    $('#account-form').addEventListener('submit',saveAccountSettings);
+  } catch(error) {if(page==='settings')$('#workspace').innerHTML=`<div class="notice">${esc(error.message)}<button type="button" data-page="settings">重新加载</button></div>`;}
+}
+async function saveAccountSettings(event) {
+  event.preventDefault();const form=event.currentTarget,fd=new FormData(form),button=form.querySelector('[type=submit]'),errorEl=$('#account-error');errorEl.textContent='';
+  const password=fd.get('newPassword');
+  if(password!==fd.get('confirmPassword')){errorEl.textContent='两次输入的新密码不一致';return;}
+  if(password&&(new TextEncoder().encode(password).length<12||new TextEncoder().encode(password).length>72)){errorEl.textContent='新密码须为 12–72 字节';return;}
+  button.disabled=true;
+  try {
+    const username=fd.get('username').trim();
+    await api('/api/settings/account','PUT',{username,currentPassword:fd.get('currentPassword'),newPassword:password});
+    form.reset();$('#workspace').innerHTML='';page='overview';showLogin();
+    $('#login-form input[name=username]').value=username;
+    $('#login-form input[name=password]').focus();toast('账号设置已更新，请重新登录');
+  } catch(error) {errorEl.textContent=error.message;}
+  finally {button.disabled=false;}
 }

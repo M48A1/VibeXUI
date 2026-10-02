@@ -84,3 +84,11 @@ func (s *Store) SetSetting(key, val string) error {
 	_, err := s.db.Exec("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", key, val)
 	return err
 }
+
+// SetCredentials updates both values in a single atomic SQLite statement.
+func (s *Store) SetCredentials(username, passwordHash string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, err := s.db.Exec("INSERT INTO settings(key,value) VALUES('username',?),('password',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", username, passwordHash)
+	return err
+}

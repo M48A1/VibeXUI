@@ -24,6 +24,7 @@ type Options struct {
 	Interval                                      time.Duration
 }
 type checkpoint struct {
+	RestartVersion        int64                    `json:"restartVersion"`
 	Kernel                model.KernelReport       `json:"kernel"`
 	KernelPath            string                   `json:"kernelPath"`
 	PreviousKernelPath    string                   `json:"previousKernelPath"`
@@ -45,6 +46,15 @@ type checkpoint struct {
 	LastClientTraffic     map[string]model.Traffic `json:"lastClientTraffic"`
 }
 type Agent struct {
+	saved          []byte
+	failedVersion  int64
+	retryAt        time.Time
+	retryDelay     time.Duration
+	collection     chan collectedStats
+	collectCancel  context.CancelFunc
+	generation     uint64
+	statsAt        time.Time
+	ipAt           time.Time
 	kernelDownload chan kernelResult
 	kernelCancel   context.CancelFunc
 	downloadKernel func(context.Context, string, string, string) (string, error)
@@ -158,7 +168,14 @@ func (a *Agent) save() error {
 	if err != nil {
 		return err
 	}
-	return atomicWrite(filepath.Join(a.opts.Directory, "agent.json"), raw)
+	if bytes.Equal(raw, a.saved) {
+		return nil
+	}
+	if err = atomicWrite(filepath.Join(a.opts.Directory, "agent.json"), raw); err != nil {
+		return err
+	}
+	a.saved = append(a.saved[:0], raw...)
+	return nil
 }
 func (a *Agent) request(ctx context.Context, path, token string, in, out any) error {
 	raw, err := json.Marshal(in)
@@ -200,6 +217,7 @@ func (a *Agent) start(ctx context.Context) error {
 	if a.running() {
 		return nil
 	}
+	a.invalidateCollection()
 	a.state.LastUpload = 0
 	a.state.LastDownload = 0
 	a.state.LastClientTraffic = map[string]model.Traffic{}
@@ -228,6 +246,7 @@ func (a *Agent) start(ctx context.Context) error {
 	}
 }
 func (a *Agent) stop() {
+	a.invalidateCollection()
 	if !a.running() {
 		return
 	}
@@ -243,7 +262,9 @@ func (a *Agent) stop() {
 func (a *Agent) command(ctx context.Context, args ...string) ([]byte, error) {
 	c, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(c, a.opts.Xray, args...).CombinedOutput()
+	cmd := exec.CommandContext(c, a.opts.Xray, args...)
+	cmd.WaitDelay = time.Second
+	out, err := cmd.CombinedOutput()
 	if err != nil && len(out) > 3000 {
 		out = out[:3000]
 	}
@@ -255,6 +276,26 @@ func (a *Agent) command(ctx context.Context, args ...string) ([]byte, error) {
 func (a *Agent) apply(ctx context.Context, t model.Task) error {
 	if len(t.Config) == 0 || !json.Valid(t.Config) {
 		return fmt.Errorf("配置内容无效")
+	}
+	if current, err := os.ReadFile(filepath.Join(a.opts.Directory, "config.json")); err == nil && sameConfig(current, t.Config) && t.RestartVersion <= a.state.RestartVersion {
+		old := a.state
+		if t.Running {
+			if err := a.start(ctx); err != nil {
+				return err
+			}
+		} else {
+			a.invalidateCollection()
+			a.stats(ctx)
+			a.stop()
+		}
+		a.state.Version = t.Version
+		a.state.DesiredRunning = t.Running
+		if err := a.save(); err != nil {
+			a.state.Version = old.Version
+			a.state.DesiredRunning = old.DesiredRunning
+			return err
+		}
+		return nil
 	}
 	candidate := filepath.Join(a.opts.Directory, "candidate.json")
 	if err := atomicWrite(candidate, t.Config); err != nil {
@@ -274,6 +315,9 @@ func (a *Agent) apply(ctx context.Context, t model.Task) error {
 			return err
 		}
 	}
+	// Capture the final counters before stopping or replacing the process.
+	a.invalidateCollection()
+	a.stats(ctx)
 	oldState := a.state
 	wasRunning := a.running()
 	a.stop()
@@ -282,6 +326,7 @@ func (a *Agent) apply(ctx context.Context, t model.Task) error {
 	}
 	if err == nil {
 		a.state.Version = t.Version
+		a.state.RestartVersion = t.RestartVersion
 		a.state.DesiredRunning = t.Running
 		a.state.LastUpload = 0
 		a.state.LastDownload = 0
@@ -321,6 +366,10 @@ func (a *Agent) stats(ctx context.Context) {
 		a.statsError = err.Error()
 		return
 	}
+	a.ingestStats(out)
+}
+func (a *Agent) ingestStats(out []byte) {
+	var err error
 	var raw struct {
 		Stat []struct {
 			Name  string      `json:"name"`
@@ -399,17 +448,18 @@ func (a *Agent) stats(ctx context.Context) {
 	a.state.LastUpload = up
 	a.state.LastDownload = down
 	a.statsError = ""
+	a.statsAt = time.Now()
 	if err = a.save(); err != nil {
 		a.statsError = "统计持久化失败：" + err.Error()
 	}
 }
 func (a *Agent) cycle(ctx context.Context) error {
-	a.stats(ctx)
-	onlineIPs, ipError := a.onlineIPs(ctx)
+	onlineIPs, ipError := a.consumeCollection()
+	defer a.beginCollection(ctx)
 	in := struct {
 		ID string `json:"id"`
 		model.Report
-	}{ID: a.opts.ID, Report: model.Report{Kernel: a.kernelReport(), OnlineIPs: onlineIPs, IPStatsError: limit(ipError, 900), AppliedVersion: a.state.Version, Running: a.running(), XrayVersion: limit(a.version, 180), Error: limit(a.lastError, 3500), Upload: a.state.Upload, Download: a.state.Download, StatsError: limit(a.statsError, 900), StatsEpoch: a.state.StatsEpoch, ClientTraffic: a.state.ClientTraffic, NodeTraffic: a.state.NodeTraffic}}
+	}{ID: a.opts.ID, Report: model.Report{StatsCollectedAt: a.statsAt, IPCollectedAt: a.ipAt, Kernel: a.kernelReport(), OnlineIPs: onlineIPs, IPStatsError: limit(ipError, 900), AppliedVersion: a.state.Version, Running: a.running(), XrayVersion: limit(a.version, 180), Error: limit(a.lastError, 3500), Upload: a.state.Upload, Download: a.state.Download, StatsError: limit(a.statsError, 900), StatsEpoch: a.state.StatsEpoch, ClientTraffic: a.state.ClientTraffic, NodeTraffic: a.state.NodeTraffic}}
 	var task model.Task
 	if err := a.request(ctx, "/api/agent/poll", a.state.Token, in, &task); err != nil {
 		return err
@@ -443,11 +493,27 @@ func (a *Agent) cycle(ctx context.Context) error {
 		}
 	}
 	if task.Version != a.state.Version {
+		if !task.Running && a.running() {
+			a.invalidateCollection()
+			a.stats(ctx)
+			a.stop()
+			a.state.DesiredRunning = false
+			if err := a.save(); err != nil {
+				return err
+			}
+		}
+		if a.failedVersion == task.Version && time.Now().Before(a.retryAt) {
+			return nil
+		}
 		if err := a.apply(ctx, task); err != nil {
+			a.noteApplyFailure(task.Version)
 			a.lastError = err.Error()
 			return err
 		}
 		a.lastError = ""
+		a.failedVersion = 0
+		a.retryDelay = 0
+		a.retryAt = time.Time{}
 	} else {
 		if task.Running {
 			if !a.running() {
@@ -459,6 +525,8 @@ func (a *Agent) cycle(ctx context.Context) error {
 				return err
 			}
 		} else {
+			a.invalidateCollection()
+			a.stats(ctx)
 			a.stop()
 		}
 		a.state.DesiredRunning = task.Running
@@ -508,6 +576,7 @@ func (a *Agent) Register(ctx context.Context) error {
 }
 
 func (a *Agent) Run(ctx context.Context) error {
+	defer a.invalidateCollection()
 	defer a.stop()
 	defer func() {
 		if a.kernelCancel != nil {

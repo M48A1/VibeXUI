@@ -13,9 +13,11 @@ import (
 // Online IPs are sampled for assigned client/inbound pairs. RPC failures
 // return nil (unknown), never an empty successful sample.
 func (a *Agent) onlineIPs(ctx context.Context) (map[string][]string, string) {
-	bindings := append([]string(nil), a.state.IPBindings...)
+	return a.collectOnlineIPs(ctx, append([]string(nil), a.state.IPBindings...), a.running())
+}
+func (a *Agent) collectOnlineIPs(ctx context.Context, bindings []string, running bool) (map[string][]string, string) {
 	sample := map[string][]string{}
-	if len(bindings) == 0 || !a.running() {
+	if len(bindings) == 0 || !running {
 		return sample, ""
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)

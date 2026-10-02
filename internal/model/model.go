@@ -17,12 +17,13 @@ import (
 )
 
 type Server struct {
-	Routing      RoutingSettings     `json:"routing"`
-	KernelTask   *KernelTask         `json:"kernelTask,omitempty"`
-	Kernel       KernelReport        `json:"kernel"`
-	OnlineIPs    map[string][]string `json:"onlineIPs,omitempty"`
-	IPStatsAt    time.Time           `json:"ipStatsAt"`
-	IPStatsError string              `json:"ipStatsError"`
+	RestartVersion int64               `json:"restartVersion"`
+	Routing        RoutingSettings     `json:"routing"`
+	KernelTask     *KernelTask         `json:"kernelTask,omitempty"`
+	Kernel         KernelReport        `json:"kernel"`
+	OnlineIPs      map[string][]string `json:"onlineIPs,omitempty"`
+	IPStatsAt      time.Time           `json:"ipStatsAt"`
+	IPStatsError   string              `json:"ipStatsError"`
 
 	ID                  string             `json:"id"`
 	Name                string             `json:"name"`
@@ -141,10 +142,12 @@ type State struct {
 	Clients   []Client    `json:"clients"`
 }
 type Report struct {
-	Kernel       KernelReport        `json:"kernel"`
-	NodeTraffic  map[string]Traffic  `json:"nodeTraffic,omitempty"`
-	OnlineIPs    map[string][]string `json:"onlineIPs"`
-	IPStatsError string              `json:"ipStatsError"`
+	StatsCollectedAt time.Time           `json:"statsCollectedAt,omitempty"`
+	IPCollectedAt    time.Time           `json:"ipCollectedAt,omitempty"`
+	Kernel           KernelReport        `json:"kernel"`
+	NodeTraffic      map[string]Traffic  `json:"nodeTraffic,omitempty"`
+	OnlineIPs        map[string][]string `json:"onlineIPs"`
+	IPStatsError     string              `json:"ipStatsError"`
 
 	AppliedVersion int64              `json:"appliedVersion"`
 	Running        bool               `json:"running"`
@@ -157,13 +160,14 @@ type Report struct {
 	ClientTraffic  map[string]Traffic `json:"clientTraffic,omitempty"`
 }
 type Task struct {
-	Kernel     *KernelTask     `json:"kernel,omitempty"`
-	NodeIDs    []string        `json:"nodeIds"`
-	IPBindings []string        `json:"ipBindings"`
-	Version    int64           `json:"version"`
-	Running    bool            `json:"running"`
-	Config     json.RawMessage `json:"config,omitempty"`
-	ClientIDs  []string        `json:"clientIds"`
+	RestartVersion int64           `json:"restartVersion"`
+	Kernel         *KernelTask     `json:"kernel,omitempty"`
+	NodeIDs        []string        `json:"nodeIds"`
+	IPBindings     []string        `json:"ipBindings"`
+	Version        int64           `json:"version"`
+	Running        bool            `json:"running"`
+	Config         json.RawMessage `json:"config,omitempty"`
+	ClientIDs      []string        `json:"clientIds"`
 }
 
 func Secret() string {

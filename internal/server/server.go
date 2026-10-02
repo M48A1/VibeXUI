@@ -386,6 +386,7 @@ func (s *Server) editServer(w http.ResponseWriter, r *http.Request) {
 		case "restart":
 			v.DesiredRunning = true
 			v.Version++
+			v.RestartVersion = v.Version
 		default:
 			return fmt.Errorf("操作无效")
 		}
@@ -878,13 +879,16 @@ func (s *Server) poll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var task model.Task
+	var configState model.State
+	authError := errors.New("Agent 凭据无效")
+	versionError := errors.New("配置版本无效")
 	err := s.store.Update(func(st *model.State) error {
 		v := serverAt(st, in.ID)
 		if v == nil || v.TokenHash == "" || subtle.ConstantTimeCompare([]byte(v.TokenHash), []byte(model.Hash(token))) != 1 {
-			return fmt.Errorf("Agent 凭据无效")
+			return authError
 		}
 		if in.AppliedVersion < 0 || in.AppliedVersion > v.Version {
-			return fmt.Errorf("配置版本无效")
+			return versionError
 		}
 		v.LastSeen = time.Now()
 		v.AppliedVersion = in.AppliedVersion
@@ -901,34 +905,56 @@ func (s *Server) poll(w http.ResponseWriter, r *http.Request) {
 		accountOnlineIPs(st, v, in.Report, time.Now())
 		reconcileClients(st, time.Now())
 		task.Version = v.Version
+		task.RestartVersion = v.RestartVersion
 		task.Running = v.DesiredRunning
 		task.NodeIDs = []string{}
+		localNodes := map[string]bool{}
 		for _, n := range st.Nodes {
 			if n.ServerID == v.ID {
 				task.NodeIDs = append(task.NodeIDs, n.ID)
+				localNodes[n.ID] = true
 			}
 		}
 		task.IPBindings = []string{}
 		task.ClientIDs = []string{}
 		for _, c := range st.Clients {
-			task.ClientIDs = append(task.ClientIDs, c.ID)
-			for _, n := range st.Nodes {
-				if n.ServerID == v.ID && model.Contains(c.NodeIDs, n.ID) {
-					task.IPBindings = append(task.IPBindings, model.BindingKey(c.ID, n.ID))
+			_, known := v.ClientTraffic[c.ID]
+			assigned := false
+			for _, nid := range c.NodeIDs {
+				if localNodes[nid] {
+					assigned = true
+					task.IPBindings = append(task.IPBindings, model.BindingKey(c.ID, nid))
 				}
 			}
-
+			// Keep previously reported clients until their last cumulative counters are acknowledged.
+			if assigned || known {
+				task.ClientIDs = append(task.ClientIDs, c.ID)
+			}
 		}
 		if v.Version != in.AppliedVersion {
-			var err error
-			task.Config, err = model.Config(*st, v.ID)
-			return err
+			configState = *st
 		}
 		return nil
 	})
 	if err != nil {
-		fail(w, 401, "Agent 认证或上报失败")
+		switch {
+		case errors.Is(err, authError):
+			fail(w, 401, err.Error())
+		case errors.Is(err, versionError):
+			fail(w, 400, err.Error())
+		default:
+			log.Printf("Agent 状态写入失败：%v", err)
+			fail(w, 500, "服务端状态写入失败")
+		}
 		return
+	}
+	if task.Version != in.AppliedVersion {
+		task.Config, err = model.Config(configState, in.ID)
+		if err != nil {
+			log.Printf("Agent 配置生成失败：%v", err)
+			fail(w, 500, "服务端配置生成失败")
+			return
+		}
 	}
 	respond(w, 200, task)
 }

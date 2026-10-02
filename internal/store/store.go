@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"os"
@@ -14,6 +15,8 @@ import (
 type Store struct {
 	mu sync.Mutex
 	db *sql.DB
+	// Committed JSON is cached; every caller receives its own decoded copy.
+	cached []byte
 }
 
 func Open(path string) (*Store, error) {
@@ -43,12 +46,15 @@ func Open(path string) (*Store, error) {
 func (s *Store) Close() error               { return s.db.Close() }
 func (s *Store) View() (model.State, error) { s.mu.Lock(); defer s.mu.Unlock(); return s.read() }
 func (s *Store) read() (model.State, error) {
-	var raw string
-	var st model.State
-	err := s.db.QueryRow("SELECT data FROM state WHERE id=1").Scan(&raw)
-	if err == nil {
-		err = json.Unmarshal([]byte(raw), &st)
+	if s.cached == nil {
+		var raw string
+		if err := s.db.QueryRow("SELECT data FROM state WHERE id=1").Scan(&raw); err != nil {
+			return model.State{}, err
+		}
+		s.cached = []byte(raw)
 	}
+	var st model.State
+	err := json.Unmarshal(s.cached, &st)
 	return st, err
 }
 func (s *Store) Update(fn func(*model.State) error) error {
@@ -65,7 +71,13 @@ func (s *Store) Update(fn func(*model.State) error) error {
 	if err != nil {
 		return err
 	}
+	if bytes.Equal(raw, s.cached) {
+		return nil
+	}
 	_, err = s.db.Exec("UPDATE state SET data=? WHERE id=1", string(raw))
+	if err == nil {
+		s.cached = raw
+	}
 	return err
 }
 func (s *Store) Setting(key string) (string, error) {

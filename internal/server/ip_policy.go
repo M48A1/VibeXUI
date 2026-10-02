@@ -44,6 +44,10 @@ func accountOnlineIPs(st *model.State, s *model.Server, r model.Report, now time
 	if r.IPStatsError != "" {
 		return
 	}
+	if !r.IPCollectedAt.IsZero() && now.Sub(r.IPCollectedAt) > onlineSampleLifetime {
+		s.IPStatsError = "在线 IP 采样已过期"
+		return
+	}
 	s.OnlineIPs = map[string][]string{}
 	for _, c := range st.Clients {
 		for _, n := range st.Nodes {
@@ -69,12 +73,21 @@ func accountOnlineIPs(st *model.State, s *model.Server, r model.Report, now time
 			s.OnlineIPs[key] = normalized
 		}
 	}
-	s.IPStatsAt = now
+	sampleAt := r.IPCollectedAt
+	if sampleAt.IsZero() {
+		sampleAt = now
+	}
+	if sampleAt.After(now) {
+		sampleAt = now
+	}
+	s.IPStatsAt = sampleAt
 	for i := range st.Clients {
 		c := &st.Clients[i]
 		for _, n := range st.Nodes {
 			if s.Running && n.ServerID == s.ID && len(s.OnlineIPs[model.BindingKey(c.ID, n.ID)]) > 0 {
-				c.LastOnlineAt = now
+				if sampleAt.After(c.LastOnlineAt) {
+					c.LastOnlineAt = sampleAt
+				}
 				break
 			}
 		}

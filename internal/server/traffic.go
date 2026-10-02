@@ -13,15 +13,6 @@ func addBytes(a, b uint64) uint64 {
 	return a + b
 }
 
-func assignedTo(st *model.State, c model.Client, sid string) bool {
-	for _, n := range st.Nodes {
-		if n.ServerID == sid && model.Contains(c.NodeIDs, n.ID) {
-			return true
-		}
-	}
-	return false
-}
-
 // Reports are cumulative within one persisted Agent epoch. High-water marks
 // make repeated and delayed reports harmless, while a new epoch permits resets.
 func accountTraffic(st *model.State, s *model.Server, r model.Report) {
@@ -39,8 +30,12 @@ func accountTraffic(st *model.State, s *model.Server, r model.Report) {
 		s.StatsEpoch = r.StatsEpoch
 	}
 	now := time.Now()
+	sampleAt := r.StatsCollectedAt
+	if sampleAt.IsZero() || sampleAt.After(now) {
+		sampleAt = now
+	}
 	if r.StatsError == "" && r.Running {
-		s.StatsUpdatedAt = now
+		s.StatsUpdatedAt = sampleAt
 	}
 	if s.NodeTraffic == nil {
 		s.NodeTraffic = map[string]model.Traffic{}
@@ -67,7 +62,7 @@ func accountTraffic(st *model.State, s *model.Server, r model.Report) {
 		}
 		s.NodeTraffic[n.ID] = previous
 		if r.StatsError == "" && r.Running {
-			n.TrafficUpdatedAt = now
+			n.TrafficUpdatedAt = sampleAt
 		}
 	}
 	for id := range s.NodeTraffic {
@@ -80,7 +75,14 @@ func accountTraffic(st *model.State, s *model.Server, r model.Report) {
 		c := &st.Clients[i]
 		existing[c.ID] = true
 		previous, known := s.ClientTraffic[c.ID]
-		if !known && !assignedTo(st, *c, s.ID) {
+		assigned := false
+		for _, id := range c.NodeIDs {
+			if validNodes[id] {
+				assigned = true
+				break
+			}
+		}
+		if !known && !assigned {
 			continue
 		}
 		current, reported := r.ClientTraffic[c.ID]
@@ -110,7 +112,7 @@ func accountTraffic(st *model.State, s *model.Server, r model.Report) {
 		s.ClientTraffic[c.ID] = previous
 		c.ServerTraffic[s.ID] = perServer
 		if r.StatsError == "" && r.Running {
-			c.TrafficUpdatedAt = now
+			c.TrafficUpdatedAt = sampleAt
 		}
 	}
 	for id := range s.ClientTraffic {

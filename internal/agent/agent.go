@@ -46,6 +46,8 @@ type checkpoint struct {
 	LastClientTraffic     map[string]model.Traffic `json:"lastClientTraffic"`
 }
 type Agent struct {
+	recoveryAt     time.Time
+	recoveryDelay  time.Duration
 	saved          []byte
 	failedVersion  int64
 	retryAt        time.Time
@@ -454,6 +456,10 @@ func (a *Agent) ingestStats(out []byte) {
 	}
 }
 func (a *Agent) cycle(ctx context.Context) error {
+	// Local process recovery must not depend on a successful panel request.
+	if err := a.recoverLocal(ctx); err != nil {
+		a.lastError = err.Error()
+	}
 	onlineIPs, ipError := a.consumeCollection()
 	defer a.beginCollection(ctx)
 	in := struct {
@@ -464,7 +470,20 @@ func (a *Agent) cycle(ctx context.Context) error {
 	if err := a.request(ctx, "/api/agent/poll", a.state.Token, in, &task); err != nil {
 		return err
 	}
-	defer func() { a.state.DesiredRunning = task.Running; a.handleKernel(ctx, task.Kernel) }()
+	if a.state.DesiredRunning != task.Running {
+		if !task.Running {
+			a.invalidateCollection()
+			a.stats(ctx)
+			a.stop()
+		}
+		a.state.DesiredRunning = task.Running
+	}
+	// Retry an earlier checkpoint failure even when the desired flag is unchanged.
+	if err := a.save(); err != nil {
+		a.lastError = err.Error()
+		return err
+	}
+	defer func() { a.handleKernel(ctx, task.Kernel) }()
 	if task.NodeIDs != nil {
 		valid := map[string]bool{}
 		for _, id := range task.NodeIDs {
@@ -503,7 +522,7 @@ func (a *Agent) cycle(ctx context.Context) error {
 			}
 		}
 		if a.failedVersion == task.Version && time.Now().Before(a.retryAt) {
-			return nil
+			return a.recoverLocal(ctx)
 		}
 		if err := a.apply(ctx, task); err != nil {
 			a.noteApplyFailure(task.Version)
@@ -512,17 +531,18 @@ func (a *Agent) cycle(ctx context.Context) error {
 		}
 		a.lastError = ""
 		a.failedVersion = 0
+		a.recoveryAt = time.Time{}
+		a.recoveryDelay = 0
 		a.retryDelay = 0
 		a.retryAt = time.Time{}
 	} else {
 		if task.Running {
-			if !a.running() {
-				a.state.LastUpload = 0
-				a.state.LastDownload = 0
-			}
-			if err := a.start(ctx); err != nil {
+			if err := a.recoverLocal(ctx); err != nil {
 				a.lastError = err.Error()
 				return err
+			}
+			if !a.running() {
+				return nil
 			}
 		} else {
 			a.invalidateCollection()

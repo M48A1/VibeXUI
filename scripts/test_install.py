@@ -46,19 +46,43 @@ curl() {
   for arg in "$@"; do
     case "$arg" in --insecure|-k) return 1;; esac
   done
-  [[ "$*" == *"--resolve panel.example.com:443:127.0.0.1"* ]] || return 1
-  [[ "${!#}" == "https://panel.example.com/api/me" ]] || return 1
+  [[ "$*" == *"--resolve panel.example.com:18443:127.0.0.1"* ]] || return 1
+  [[ "${!#}" == "https://panel.example.com:18443/api/me" ]] || return 1
   printf 401
 }
-wait_for_https panel.example.com 3
+wait_for_https panel.example.com 18443 3
 ''')
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_custom_port_propagates_to_config_and_login(self):
+        result = self.shell('''
+configure_panel_address Panel.Example.com 18443
+panel_caddy_config
+username=testuser password=testpass
+print_login
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("https://panel.example.com:18443 {", result.stdout)
+        self.assertIn("disable_tlsalpn_challenge", result.stdout)
+        self.assertIn("登录地址：https://panel.example.com:18443", result.stdout)
+        self.assertNotIn(":443", result.stdout)
+
+    def test_invalid_domain_and_ports_rejected(self):
+        for domain in ["https://panel.example.com", "panel.example.com:1234", "a..com", "-a.com", "a-.com", "1.2.3.4", "a.com/path"]:
+            result = self.shell(f'if configure_panel_address "{domain}" 8443; then exit 1; fi')
+            self.assertEqual(result.returncode, 0, result.stderr)
+        for port in ["0", "65536", "443", "80", "8080", "2019", "-1", "abc", "18443/path"]:
+            result = self.shell(f'if configure_panel_address panel.example.com "{port}"; then exit 1; fi')
+            self.assertEqual(result.returncode, 0, result.stderr)
+        result = self.shell('configure_panel_address panel.example.com 08443; printf "%s" "$panel_port"')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "8443")
 
     def test_invalid_certificate_never_reports_ready(self):
         result = self.shell('''
 curl() { printf 401; return 60; }
 sleep() { SECONDS=$((SECONDS + 100)); }
-if wait_for_https panel.example.com 3; then exit 1; fi
+if wait_for_https panel.example.com 18443 3; then exit 1; fi
 ''')
         self.assertEqual(result.returncode, 0, result.stderr)
 

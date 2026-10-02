@@ -13,6 +13,44 @@ generate_credentials() {
   username="vx_$random_username"
 }
 
+validate_domain() {
+  local label
+  [[ ${#1} -le 253 && $1 == *.* && $1 != *..* && $1 != *. ]] || return 1
+  [[ ! $1 =~ ^[0-9.]+$ ]] || return 1
+  local labels=()
+  IFS='.' read -r -a labels <<<"$1"
+  for label in "${labels[@]}"; do
+    [[ ${#label} -le 63 && $label =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?$ ]] || return 1
+  done
+}
+
+configure_panel_address() {
+  validate_domain "$1" || { echo "域名格式无效，请输入不含协议、端口的域名" >&2; return 1; }
+  local port=$2
+  [[ $port =~ ^[0-9]{1,5}$ ]] || { echo "端口必须为 1–65535 的整数" >&2; return 1; }
+  port=$((10#$port))
+  (( port >= 1 && port <= 65535 )) || { echo "端口超出范围" >&2; return 1; }
+  case $port in
+    80|443|8080|2019) echo "此端口保留给证书验证、HTTPS 服务、内部面板或 Caddy 管理，请选择其他端口" >&2; return 1;;
+  esac
+  domain=${1,,}
+  panel_port=$port
+  public_url="https://$domain:$panel_port"
+}
+
+panel_caddy_config() {
+  cat <<EOF
+$public_url {
+  tls {
+    issuer acme {
+      disable_tlsalpn_challenge
+    }
+  }
+  reverse_proxy 127.0.0.1:8080
+}
+EOF
+}
+
 wait_for_panel() {
   local deadline=$((SECONDS + ${1:-30})) status
   while (( SECONDS < deadline )); do
@@ -25,12 +63,12 @@ wait_for_panel() {
 }
 
 wait_for_https() {
-  local site=$1 deadline=$((SECONDS + ${2:-90})) status
+  local site=$1 port=$2 deadline=$((SECONDS + ${3:-90})) status
   while (( SECONDS < deadline )); do
     # Connect locally with the domain's SNI, while verifying the public certificate.
     status=$(curl --silent --noproxy '*' --output /dev/null --write-out '%{http_code}' \
-      --connect-timeout 1 --max-time 2 --resolve "$site:443:127.0.0.1" \
-      "https://$site/api/me") || status=''
+      --connect-timeout 1 --max-time 2 --resolve "$site:$port:127.0.0.1" \
+      "https://$site:$port/api/me") || status=''
     [[ $status == 401 ]] && return 0
     sleep 2
   done
@@ -38,7 +76,7 @@ wait_for_https() {
 }
 
 print_login() {
-  printf '\n登录地址：https://%s\n管理员账号：%s\n管理员密码：%s\n' "$domain" "$username" "$password"
+  printf '\n登录地址：%s\n管理员账号：%s\n管理员密码：%s\n' "$public_url" "$username" "$password"
   echo "初始账号密码保存在 /etc/vibexui/panel.env（仅 root 可读）。"
 }
 
@@ -52,7 +90,10 @@ command -v systemctl >/dev/null || { echo "需要使用 systemd 的 Linux 系统
 if [[ $mode == panel ]]; then
   [[ ! -e /var/lib/vibexui/panel/panel.db ]] || { echo "已有面板数据库。请恢复原安装配置或参照 README 更新，不能用新随机账号覆盖已有登录凭据。"; exit 1; }
   read -r -p "面板域名（DNS 已指向本机，例如 panel.example.com）：" domain
-  [[ $domain =~ ^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$ && $domain == *.* && $domain != *..* ]] || { echo "域名格式无效"; exit 1; }
+  read -r -p "面板 HTTPS 端口 [8443]（不占用 443）：" panel_port
+  configure_panel_address "$domain" "${panel_port:-8443}" || exit 1
+  echo "访问地址：$public_url。请将域名 A/AAAA 记录指向本机，并放行 TCP 80（证书申请/续期）和 TCP $panel_port。"
+  echo "80 端口须由 Caddy 提供证书验证；若已有其他 Web 服务占用，请先配置好反向代理再安装。"
   local packages=() dependency
   for dependency in caddy openssl curl; do
     command -v "$dependency" >/dev/null || packages+=("$dependency")
@@ -86,7 +127,7 @@ Wants=network-online.target
 User=vibexui
 Group=vibexui
 EnvironmentFile=/etc/vibexui/panel.env
-ExecStart=/usr/local/bin/vibexui-panel -listen 127.0.0.1:8080 -db /var/lib/vibexui/panel/panel.db -public-url https://$domain -downloads-dir /var/lib/vibexui/downloads
+ExecStart=/usr/local/bin/vibexui-panel -listen 127.0.0.1:8080 -db /var/lib/vibexui/panel/panel.db -public-url $public_url -downloads-dir /var/lib/vibexui/downloads
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
@@ -98,7 +139,7 @@ UMask=0077
 WantedBy=multi-user.target
 EOF
   install -d -m 0755 /etc/caddy
-  printf '%s {\n  reverse_proxy 127.0.0.1:8080\n}\n' "$domain" >/etc/caddy/vibexui-panel.caddy
+  panel_caddy_config >/etc/caddy/vibexui-panel.caddy
   if [[ -f /etc/caddy/Caddyfile ]]; then
     cp -p /etc/caddy/Caddyfile /etc/caddy/Caddyfile.vibexui-backup
   else
@@ -120,18 +161,18 @@ EOF
   systemctl enable caddy
   systemctl restart caddy
   echo "正在等待 Caddy 自动申请证书并验证 HTTPS（最多约 90 秒）……"
-  if wait_for_https "$domain"; then
+  if wait_for_https "$domain" "$panel_port"; then
     echo "安装完成，HTTPS 证书已验证，Caddy 将自动续期。"
     print_login
   else
-    echo "面板已启动，但 HTTPS 尚未验证成功。请检查域名 A/AAAA 记录和 80/443 端口，Caddy 会继续尝试申请证书。"
+    echo "面板已启动，但 HTTPS 尚未验证成功。请检查域名 A/AAAA 记录和 80/$panel_port 端口，Caddy 会继续尝试申请证书。"
     print_login
     echo "查看证书日志：journalctl -u caddy -n 50"
     exit 1
   fi
 else
   [[ -x /usr/local/bin/xray ]] || { echo "请先从 XTLS/Xray-core 官方发布安装 Xray 到 /usr/local/bin/xray"; exit 1; }
-  read -r -p "主面板地址（https://域名）：" panel
+  read -r -p "主面板地址（https://域名:端口）：" panel
   [[ $panel =~ ^https://[a-zA-Z0-9.-]+(:[0-9]+)?$ ]] || { echo "面板地址格式无效"; exit 1; }
   read -r -p "服务器 ID：" server_id
   [[ $server_id =~ ^[a-zA-Z0-9_-]{16}$ ]] || { echo "服务器 ID 格式无效"; exit 1; }

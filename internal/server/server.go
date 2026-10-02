@@ -25,6 +25,7 @@ import (
 
 type Options struct{ Username, Password, PublicURL, DownloadsDir string }
 type Server struct {
+	cdn                           *cdnChecker
 	kernels                       *kernel.Catalog
 	telegram                      *telegramNotifier
 	credentialVersion             uint64
@@ -50,6 +51,7 @@ func New(db *store.Store, o Options) (*Server, error) {
 	s.downloads = o.DownloadsDir
 	s.telegram = newTelegram(db, s.publicURL)
 	s.kernels = kernel.NewCatalog()
+	s.cdn = &cdnChecker{resolver: net.DefaultResolver, slots: make(chan struct{}, 4)}
 	s.username, err = db.Setting("username")
 	if err != nil {
 		return nil, err
@@ -110,6 +112,7 @@ func New(db *store.Store, o Options) (*Server, error) {
 	mux.HandleFunc("POST /api/clients/batch", s.admin(s.batchCreateClients))
 	mux.HandleFunc("GET /api/nodes/{id}/export", s.admin(s.exportNode))
 	mux.HandleFunc("POST /api/nodes/import", s.admin(s.importNode))
+	mux.HandleFunc("POST /api/nodes/check-cdn", s.admin(s.checkCDN))
 	mux.HandleFunc("POST /api/nodes/keys", s.admin(s.nodeKeys))
 	mux.HandleFunc("POST /api/nodes/bulk", s.admin(s.bulkNodes))
 	mux.HandleFunc("POST /api/nodes/{id}/reset-quota", s.admin(s.resetNodeQuota))

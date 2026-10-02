@@ -185,7 +185,7 @@ function trafficFields(obj,legacy=true) {
 }
 function nodeFields(obj,id) {
  const basic=`<label>服务器<select name="serverId" ${id?'disabled':''}>${state.servers.map(s=>`<option value="${esc(s.id)}" ${s.id===obj?.serverId?'selected':''}>${esc(s.name)} · ${esc(s.host)}</option>`).join('')}</select></label>`+field('入站名称','name',obj?.name||'','text','maxlength="100"')+enabledField(obj?obj.enabled:true)+`<div class="form-grid">${optionalField('监听地址','listen',obj?.listen||'','placeholder="0.0.0.0"')}${field('监听端口','port',obj?.port||443,'number','min="1" max="65535"')}</div><p class="hint">${obj?.sourceNodeId?'复制此入站也会分配源入站的客户端，并复制其 IP / Flow 覆盖；各客户端的共享额度保留。':''}VLESS · TCP · REALITY。10085 为统计接口保留端口，保存后 Agent 自动同步。</p>`;
- const reality=field('SNI 域名','sni',obj?.sni||'','text','placeholder="与目标证书匹配的域名"')+field('REALITY 目标','target',obj?.target||'','text','placeholder="目标域名:443"')+optionalField('附加 SNI（逗号分隔）','serverNames',(obj?.serverNames||[]).join(', '),'placeholder="备用证书域名"')+`<label>REALITY 私钥<input name="privateKey" maxlength="64" autocomplete="off" placeholder="${id?'留空保留现有私钥':'留空自动生成'}"></label><label>公钥<input name="publicKey" value="${esc(obj?.publicKey||'')}" readonly placeholder="保存或生成密钥后显示"></label><button type="button" data-action="node-keys">生成新的 REALITY 密钥</button>${optionalField('Short ID','shortId',obj?.shortId??Array.from(crypto.getRandomValues(new Uint8Array(8)),b=>b.toString(16).padStart(2,'0')).join(''),'maxlength="16" pattern="([a-fA-F0-9]{2})*"')}<div class="form-grid">${selectField('客户端指纹','fingerprint',obj?.fingerprint||'chrome',['chrome','firefox','safari','ios','android','edge','360','qq','random','randomized'].map(v=>[v,v]))}${optionalField('SpiderX','spiderX',obj?.spiderX||'','maxlength="200" placeholder="/"')}</div><details><summary>REALITY 高级选项</summary><div class="form-grid">${optionalField('最低客户端版本','minClientVersion',obj?.minClientVersion||'','placeholder="x.y.z"')}${optionalField('最高客户端版本','maxClientVersion',obj?.maxClientVersion||'','placeholder="x.y.z"')}<label>最大时间差（毫秒，0 为不限）<input name="maxTimeDiff" type="number" min="0" max="86400000" step="1" value="${obj?.maxTimeDiff||0}" required></label></div><label class="checkbox"><input name="realityShow" type="checkbox" ${obj?.realityShow?'checked':''}>REALITY 调试输出</label></details><p class="hint">更新密钥后，需要重新导入节点分享链接或更新订阅。</p>`;
+ const reality=field('SNI 域名','sni',obj?.sni||'','text','placeholder="与目标证书匹配的域名"')+`<button type="button" data-action="node-check-cdn">检测 CDN</button><div id="cdn-result" class="hint" role="status" aria-live="polite"></div><p class="hint">检测当前 SNI 的 CDN 特征；结果不代表 REALITY 可用性。</p>`+field('REALITY 目标','target',obj?.target||'','text','placeholder="目标域名:443"')+optionalField('附加 SNI（逗号分隔）','serverNames',(obj?.serverNames||[]).join(', '),'placeholder="备用证书域名"')+`<label>REALITY 私钥<input name="privateKey" maxlength="64" autocomplete="off" placeholder="${id?'留空保留现有私钥':'留空自动生成'}"></label><label>公钥<input name="publicKey" value="${esc(obj?.publicKey||'')}" readonly placeholder="保存或生成密钥后显示"></label><button type="button" data-action="node-keys">生成新的 REALITY 密钥</button>${optionalField('Short ID','shortId',obj?.shortId??Array.from(crypto.getRandomValues(new Uint8Array(8)),b=>b.toString(16).padStart(2,'0')).join(''),'maxlength="16" pattern="([a-fA-F0-9]{2})*"')}<div class="form-grid">${selectField('客户端指纹','fingerprint',obj?.fingerprint||'chrome',['chrome','firefox','safari','ios','android','edge','360','qq','random','randomized'].map(v=>[v,v]))}${optionalField('SpiderX','spiderX',obj?.spiderX||'','maxlength="200" placeholder="/"')}</div><details><summary>REALITY 高级选项</summary><div class="form-grid">${optionalField('最低客户端版本','minClientVersion',obj?.minClientVersion||'','placeholder="x.y.z"')}${optionalField('最高客户端版本','maxClientVersion',obj?.maxClientVersion||'','placeholder="x.y.z"')}<label>最大时间差（毫秒，0 为不限）<input name="maxTimeDiff" type="number" min="0" max="86400000" step="1" value="${obj?.maxTimeDiff||0}" required></label></div><label class="checkbox"><input name="realityShow" type="checkbox" ${obj?.realityShow?'checked':''}>REALITY 调试输出</label></details><p class="hint">更新密钥后，需要重新导入节点分享链接或更新订阅。</p>`;
  const policy=trafficFields(obj,false)+`<label>入站到期时间（留空为不限）<input name="expires" type="datetime-local" value="${localTime(obj?.expiresAt)}"></label><p class="hint">达到入站限额或到期时间时，撤下整个入站。客户端流量策略独立管理，重置入站不会重置客户端。</p>`;
  const extra=`<label class="checkbox"><input name="sniffing" type="checkbox" ${obj?.sniffing?'checked':''}>启用嗅探（HTTP / TLS / QUIC）</label><label class="checkbox"><input name="sniffingRouteOnly" type="checkbox" ${obj?.sniffingRouteOnly?'checked':''}>嗅探仅用于路由</label><label>订阅排序（数值越小越靠前）<input name="subSortIndex" type="number" min="-100000" max="100000" step="1" value="${obj?.subSortIndex||1}" required></label><label class="checkbox"><input name="excludeFromSub" type="checkbox" ${obj?.excludeFromSub?'checked':''}>从订阅中隐藏此入站</label><p class="hint">隐藏订阅不会停止此入站运行。</p>`;
  return formSection('基本设置',basic,true)+formSection('REALITY 与分享参数',reality,true)+formSection('入站流量与到期',policy,true)+formSection('嗅探与订阅',extra);
@@ -348,6 +348,7 @@ document.addEventListener('click',async event=>{
     if(action==='node-traffic'){nodeTraffic(state.nodes.find(n=>n.id===id));return;}
     if(action==='node-export'){const data=await api(`/api/nodes/${id}/export`);downloadJSON(data,'vibexui-inbound-'+id+'.json');return;}
     if(action==='client-clear-ips'){await api(`/api/clients/${id}/clear-ips`,'POST',{});$('#info').close();await refresh();toast('已清除 IP 记录和暂停状态，后续连接会重新采集');return;}
+    if(action==='node-check-cdn'){await checkNodeCDN(button);return;}
     if(action==='node-keys'){button.disabled=true;const keys=await api('/api/nodes/keys','POST',{});for(const name of ['privateKey','publicKey','shortId'])$('#fields input[name='+name+']').value=keys[name];return;}
     if(action.startsWith('bulk-')){const operation=action.slice(5);if(['enable','disable','reset','delete'].includes(operation)){if(['delete','reset'].includes(operation)&&!confirm((operation==='delete'?'删除':'重置流量：')+'所选 '+selectedIDs.size+' 项？'))return;button.disabled=true;await runBulk(operation);}else bulkDialog(operation);return;}
     if(action==='client-batch'){batchDialog(button.dataset.nodeId);return;}
@@ -570,3 +571,28 @@ async function changeKernel(action){
 }
 $('#kernel-install').addEventListener('click',()=>changeKernel('install'));
 $('#kernel-rollback').addEventListener('click',()=>changeKernel('rollback'));
+
+// Editing the SNI invalidates both displayed and in-flight results.
+let cdnCheckGeneration=0;
+$('#fields').addEventListener('input',event=>{
+ if(event.target.name==='sni') {cdnCheckGeneration++; const result=$('#cdn-result');if(result)result.textContent='';}
+});
+async function checkNodeCDN(button) {
+ const input=$('#fields input[name=sni]'), result=$('#cdn-result');
+ if(!input||!result)return;
+ const domain=input.value.trim(), generation=++cdnCheckGeneration;
+ if(!domain){result.textContent='请先填写 SNI 域名';return;}
+ button.disabled=true;result.textContent='正在检测 DNS / CDN 特征…';
+ const current=()=>result.isConnected&&input.isConnected&&input.value.trim()===domain&&generation===cdnCheckGeneration;
+ try {
+  const data=await api('/api/nodes/check-cdn','POST',{sni:domain});
+  if(!current())return;
+  const title=data.status==='detected'?'检测到 CDN 特征：'+data.providers.join('、'):data.status==='inconclusive'?'DNS 信息不足，无法判断':'未发现已知 CDN 特征';
+  result.innerHTML='<strong>'+esc(title)+'</strong><p>'+esc(data.domain)+' · '+esc(new Date(data.checkedAt).toLocaleString())+'</p>'+
+   (data.canonicalName?'<p>DNS 规范名称：'+esc(data.canonicalName)+'</p>':'')+
+   '<p>IP：'+esc(data.addresses.join('、')||'未解析到')+'</p>'+
+   data.evidence.map(v=>'<p>'+esc(v)+'</p>').join('')+data.warnings.map(v=>'<p>'+esc(v)+'</p>').join('')+
+   '<p>由面板所在网络检测，可能与 VPS 不同。未识别不等于没有 CDN，也不能证明 REALITY 可用。当前规则覆盖 Cloudflare IP、CloudFront / Fastly / Akamai DNS 特征（2026-10-02）；不判断内容是否被缓存。</p>';
+ } catch(error) {if(current())result.textContent='检测失败：'+error.message;}
+ finally {button.disabled=false;}
+}

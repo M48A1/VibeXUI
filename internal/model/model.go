@@ -17,6 +17,7 @@ import (
 )
 
 type Server struct {
+	Routing      RoutingSettings     `json:"routing"`
 	KernelTask   *KernelTask         `json:"kernelTask,omitempty"`
 	Kernel       KernelReport        `json:"kernel"`
 	OnlineIPs    map[string][]string `json:"onlineIPs,omitempty"`
@@ -133,9 +134,11 @@ type Client struct {
 	ServerTraffic     map[string]Traffic `json:"serverTraffic,omitempty"`
 }
 type State struct {
-	Servers []Server `json:"servers"`
-	Nodes   []Node   `json:"nodes"`
-	Clients []Client `json:"clients"`
+	Outbounds []Outbound  `json:"outbounds"`
+	Rules     []RouteRule `json:"rules"`
+	Servers   []Server    `json:"servers"`
+	Nodes     []Node      `json:"nodes"`
+	Clients   []Client    `json:"clients"`
 }
 type Report struct {
 	Kernel       KernelReport        `json:"kernel"`
@@ -237,6 +240,10 @@ func Contains(ids []string, id string) bool {
 }
 
 func Config(state State, serverID string) (json.RawMessage, error) {
+	outbounds, routing, err := routingConfig(state, serverID)
+	if err != nil {
+		return nil, err
+	}
 	inbounds := []any{}
 	for _, n := range state.Nodes {
 		if n.ServerID != serverID || NodeStatus(n, time.Now()) != "active" {
@@ -273,7 +280,7 @@ func Config(state State, serverID string) (json.RawMessage, error) {
 		}
 		inbounds = append(inbounds, entry)
 	}
-	return json.MarshalIndent(map[string]any{"log": map[string]any{"loglevel": "warning"}, "api": map[string]any{"tag": "api", "listen": "127.0.0.1:10085", "services": []string{"StatsService"}}, "stats": map[string]any{}, "policy": map[string]any{"levels": map[string]any{"0": map[string]any{"statsUserUplink": true, "statsUserDownlink": true, "statsUserOnline": true}}, "system": map[string]any{"statsInboundUplink": true, "statsInboundDownlink": true}}, "inbounds": inbounds, "outbounds": []any{map[string]any{"tag": "direct", "protocol": "freedom"}}}, "", "  ")
+	return json.MarshalIndent(map[string]any{"log": map[string]any{"loglevel": "warning"}, "api": map[string]any{"tag": "api", "listen": "127.0.0.1:10085", "services": []string{"StatsService"}}, "stats": map[string]any{}, "policy": map[string]any{"levels": map[string]any{"0": map[string]any{"statsUserUplink": true, "statsUserDownlink": true, "statsUserOnline": true}}, "system": map[string]any{"statsInboundUplink": true, "statsInboundDownlink": true}}, "inbounds": inbounds, "outbounds": outbounds, "routing": routing}, "", "  ")
 }
 func Link(c Client, n Node, s Server) string {
 	q := url.Values{"type": {"tcp"}, "security": {"reality"}, "encryption": {"none"}, "flow": {ClientNodeFlow(c, n.ID)}, "sni": {n.SNI}, "fp": {"chrome"}, "pbk": {n.PublicKey}, "sid": {n.ShortID}}

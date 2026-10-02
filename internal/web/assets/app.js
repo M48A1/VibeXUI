@@ -4,6 +4,8 @@ const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;',
 const quote = value => "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
 let state = {servers:[], nodes:[], clients:[]}, page = 'overview', publicURL = '', editor = null, timer = null, loading = false, selectedIDs = new Set();
 const names = {
+ outbounds:["出站管理","为每台服务器配置链式代理落地出口。","出站管理"],
+ routing:["路由分流","按域名、IP、入站和端口选择出口。","路由分流"],
   settings:['后台设置','管理管理员账号和登录密码。','后台设置'],
   notifications:['外部通知','通过 Telegram 接收运行状态、到期及流量提醒。','外部通知'],
   overview:['服务器总览','让服务器、入站和用户保持连接。','总览'],
@@ -133,8 +135,10 @@ function render() {
   const [title,description,crumb]=names[page];
   $('#page-title').textContent=title; $('#page-description').textContent=description; $('#crumb').textContent=crumb;
   document.querySelectorAll('[data-page]').forEach(b=>b.classList.toggle('active',b.dataset.page===page));
-  const notifications=page==='notifications'||page==='settings';
+  const routingPage=page==='outbounds'||page==='routing';
+  const notifications=page==='notifications'||page==='settings'||routingPage;
   $('#add-button').hidden=notifications; $('#metrics').hidden=notifications; $('.list-toolbar').hidden=notifications; $('#overview-guide').hidden=notifications;
+  if(routingPage){renderRouting();return;}
   if(page==='settings'){if(!$('#account-form'))loadAccountSettings();return;}
   if(notifications){if(!$('#telegram-form'))loadTelegramSettings();return;}
   $('#add-button').textContent=page==='clients'?'＋ 添加用户':page==='nodes'?'＋ 添加入站':'＋ 添加服务器';

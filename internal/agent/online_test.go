@@ -86,7 +86,7 @@ func TestRealXrayOnlineAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	st := model.State{Nodes: []model.Node{{ID: "n", ServerID: "s", Name: "test", Port: 19446, SNI: "example.com", Target: "example.com:443", PrivateKey: private, PublicKey: public, ShortID: "1234567890abcdef", Enabled: true}}, Clients: []model.Client{{ID: "alice", UUID: model.UUID(), Enabled: true, NodeIDs: []string{"n"}, NodeIPLimits: map[string]int{"n": 1}}}}
+	st := model.State{Servers: []model.Server{{ID: "s"}}, Nodes: []model.Node{{ID: "n", ServerID: "s", Name: "test", Port: 19446, SNI: "example.com", Target: "example.com:443", PrivateKey: private, PublicKey: public, ShortID: "1234567890abcdef", Enabled: true}}, Clients: []model.Client{{ID: "alice", UUID: model.UUID(), Enabled: true, NodeIDs: []string{"n"}, NodeIPLimits: map[string]int{"n": 1}}}}
 	config, err := model.Config(st, "s")
 	if err != nil {
 		t.Fatal(err)

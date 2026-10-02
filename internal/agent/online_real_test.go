@@ -77,7 +77,7 @@ func TestRealVLESSOnlineIPsAndScopedRevocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	st := model.State{Nodes: []model.Node{
+	st := model.State{Servers: []model.Server{{ID: "s"}}, Nodes: []model.Node{
 		{ID: "n", ServerID: "s", Name: "first", Port: port(), SNI: "example.com", Target: "example.com:443", PrivateKey: private, PublicKey: public, ShortID: "1234567890abcdef", Enabled: true},
 		{ID: "m", ServerID: "s", Name: "second", Port: port(), SNI: "example.com", Target: "example.com:443", PrivateKey: private, PublicKey: public, ShortID: "1234567890abcdef", Enabled: true},
 	}, Clients: []model.Client{

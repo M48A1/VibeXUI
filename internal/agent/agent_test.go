@@ -173,7 +173,7 @@ func TestRealXrayConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	st := model.State{Nodes: []model.Node{{Listen: "127.0.0.1", Sniffing: true, SniffingRouteOnly: true, ServerNames: []string{"www.example.com"}, MinClientVersion: "1.0.0", MaxTimeDiff: 60000, ID: "node", ServerID: "server", Name: "node", Port: 19443, SNI: "example.com", Target: "example.com:443", PrivateKey: private, PublicKey: public, ShortID: "1234567890abcdef", Enabled: true}}, Clients: []model.Client{{ReverseTag: "reverse-test", ID: "client", UUID: model.UUID(), Enabled: true, NodeIDs: []string{"node"}}}}
+	st := model.State{Servers: []model.Server{{ID: "server"}}, Nodes: []model.Node{{Listen: "127.0.0.1", Sniffing: true, SniffingRouteOnly: true, ServerNames: []string{"www.example.com"}, MinClientVersion: "1.0.0", MaxTimeDiff: 60000, ID: "node", ServerID: "server", Name: "node", Port: 19443, SNI: "example.com", Target: "example.com:443", PrivateKey: private, PublicKey: public, ShortID: "1234567890abcdef", Enabled: true}}, Clients: []model.Client{{ReverseTag: "reverse-test", ID: "client", UUID: model.UUID(), Enabled: true, NodeIDs: []string{"node"}}}}
 	conf, err := model.Config(st, "server")
 	if err != nil {
 		t.Fatal(err)

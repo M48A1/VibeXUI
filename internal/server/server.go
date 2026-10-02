@@ -90,6 +90,15 @@ func New(db *store.Store, o Options) (*Server, error) {
 	mux.HandleFunc("PATCH /api/servers/{id}", s.admin(s.editServer))
 	mux.HandleFunc("DELETE /api/servers/{id}", s.admin(s.deleteServer))
 	mux.HandleFunc("POST /api/servers/{id}/registration", s.admin(s.registration))
+	mux.HandleFunc("POST /api/outbounds", s.admin(s.saveOutbound))
+	mux.HandleFunc("PUT /api/outbounds/{id}", s.admin(s.saveOutbound))
+	mux.HandleFunc("DELETE /api/outbounds/{id}", s.admin(s.deleteOutbound))
+	mux.HandleFunc("POST /api/outbounds/from-node", s.admin(s.outboundFromNode))
+	mux.HandleFunc("POST /api/routing/rules", s.admin(s.saveRouteRule))
+	mux.HandleFunc("PUT /api/routing/rules/{id}", s.admin(s.saveRouteRule))
+	mux.HandleFunc("DELETE /api/routing/rules/{id}", s.admin(s.deleteRouteRule))
+	mux.HandleFunc("PUT /api/servers/{id}/routing", s.admin(s.saveRouting))
+	mux.HandleFunc("PUT /api/servers/{id}/routing/rules/order", s.admin(s.orderRouteRules))
 	mux.HandleFunc("POST /api/nodes", s.admin(s.saveNode))
 	mux.HandleFunc("PATCH /api/nodes/{id}", s.admin(s.saveNode))
 	mux.HandleFunc("DELETE /api/nodes/{id}", s.admin(s.deleteNode))
@@ -269,6 +278,10 @@ func redact(st *model.State, keys bool) {
 		st.Servers[i].RegistrationHash = ""
 	}
 	if keys {
+		for i := range st.Outbounds {
+			st.Outbounds[i].Password = ""
+			st.Outbounds[i].UUID = ""
+		}
 		for i := range st.Nodes {
 			st.Nodes[i].PrivateKey = ""
 		}
@@ -407,6 +420,20 @@ func (s *Server) deleteServer(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		st.Servers = servers
+		outs := []model.Outbound{}
+		for _, o := range st.Outbounds {
+			if o.ServerID != r.PathValue("id") {
+				outs = append(outs, o)
+			}
+		}
+		st.Outbounds = outs
+		rules := []model.RouteRule{}
+		for _, v := range st.Rules {
+			if v.ServerID != r.PathValue("id") {
+				rules = append(rules, v)
+			}
+		}
+		st.Rules = rules
 		nodes := []model.Node{}
 		for _, v := range st.Nodes {
 			if v.ServerID != r.PathValue("id") {
@@ -556,6 +583,9 @@ func (s *Server) deleteNode(w http.ResponseWriter, r *http.Request) {
 	err := s.store.Update(func(st *model.State) error {
 		for i, n := range st.Nodes {
 			if n.ID == r.PathValue("id") {
+				if err := model.CheckNodeRoutingDelete(*st, n.ID); err != nil {
+					return err
+				}
 				bump(st, n.ServerID)
 				st.Nodes = append(st.Nodes[:i], st.Nodes[i+1:]...)
 				cleanAssignments(st)

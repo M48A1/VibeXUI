@@ -298,6 +298,9 @@ func (s *Server) bulkNodes(w http.ResponseWriter, r *http.Request) {
 			case "reset":
 				n.QuotaBaseline = model.Traffic{Upload: n.Upload, Download: n.Download}
 			case "delete":
+				if err := model.CheckNodeRoutingDelete(*st, n.ID); err != nil {
+					return err
+				}
 			default:
 				return fmt.Errorf("批量操作无效")
 			}

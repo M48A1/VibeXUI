@@ -25,6 +25,7 @@ function toast(message) {
   clearTimeout(toast.timeout); toast.timeout = setTimeout(() => $('#toast').hidden = true, 4000);
 }
 function showLogin() {
+  $('#kernel-dialog').close();
   if(page==='settings')$('#workspace').innerHTML='';
   clearInterval(timer); timer = null;
   $('#app').hidden = true; $('#login').hidden = false;
@@ -39,6 +40,7 @@ async function enter() {
   if (!timer) timer = setInterval(() => refresh().catch(e => {if (!$('#app').hidden) toast(e.message);}), 10000);
 }
 async function refresh() {
+  if($('#kernel-dialog').open&&(page==='settings'||page==='notifications')){state=await api('/api/state');renderKernelStatus();}
   if(page==='settings'){if(!$('#account-form'))await loadAccountSettings();else await api('/api/me');return;}
   if (page === 'notifications') {await refreshTelegramStatus(); return;}
   if (loading) return;
@@ -127,6 +129,7 @@ function renderGuide() {
   $('#overview-guide').innerHTML=`<div class="setup-steps">${stages.map(([title,description,done,action],i)=>`<button data-action="${action}" class="setup-step ${done?'complete':''}"><span class="step-number">${done?'✓':i+1}</span><span><strong>${title}</strong><small>${description}</small></span></button>`).join('')}</div>${issues.length?`<div class="attention"><span>● ${issues.length} 台服务器需要关注</span><button data-action="show-attention">查看状态 →</button></div>`:''}`;
 }
 function render() {
+  renderKernelStatus();
   const [title,description,crumb]=names[page];
   $('#page-title').textContent=title; $('#page-description').textContent=description; $('#crumb').textContent=crumb;
   document.querySelectorAll('[data-page]').forEach(b=>b.classList.toggle('active',b.dataset.page===page));
@@ -501,3 +504,65 @@ async function saveAccountSettings(event) {
   } catch(error) {errorEl.textContent=error.message;}
   finally {button.disabled=false;}
 }
+
+
+let kernelServerID='',kernelReleases=[],kernelBusy=false;
+function selectedKernelServer(){return state.servers.find(s=>s.id===kernelServerID);}
+function kernelTaskBusy(s){return s.kernelTask&&(s.kernelTask.id!==s.kernel?.id||!['succeeded','failed'].includes(s.kernel?.state));}
+function renderKernelStatus(){
+  if(!selectedKernelServer())kernelServerID=state.servers[0]?.id||'';
+  const s=selectedKernelServer();
+  $('#kernel-current').textContent=s?`${s.name} · ${s.xrayVersion?s.xrayVersion.split(' ').slice(0,2).join(' '):'等待上报'} ▾`:'选择版本 ▾';
+  if(!$('#kernel-dialog').open)return;
+  const choices=state.servers.length?state.servers.map(v=>`<option value="${esc(v.id)}">${esc(v.name)} · ${esc(v.host)}</option>`).join(''):'<option value="">暂无服务器</option>';
+  if($('#kernel-server').innerHTML!==choices)$('#kernel-server').innerHTML=choices;
+  $('#kernel-server').value=kernelServerID;
+  const status=s?.kernel||{};
+  const phases={downloading:'下载并校验中',switching:'切换中',succeeded:'切换成功',failed:'切换失败'};
+  const lines=s?[`服务器：${s.name}`,`当前内核：${s.xrayVersion||'等待上报'}`]:['请先添加服务器并安装新版 Agent。'];
+  if(s&&!status.supported)lines.push('该 Agent 不支持内核管理，请先升级 Agent。');
+  if(s&&!online(s))lines.push('服务器离线，恢复在线后可操作。');
+  if(s?.kernelTask)lines.push(`最近任务：${s.kernelTask.action==='rollback'?'回滚':s.kernelTask.version} · ${s.kernelTask.id===status.id?(phases[status.state]||'等待执行'):'等待 Agent 接收'}`);
+  if(status.previousVersion)lines.push(`可回滚版本：${status.previousVersion}`);
+  if(status.error)lines.push(status.error);
+  $('#kernel-status').textContent=lines.join('\n');
+  const disabled=kernelBusy||!s||!online(s)||!status.supported||kernelTaskBusy(s);
+  $('#kernel-install').disabled=disabled||!$('#kernel-version').value;
+  $('#kernel-rollback').disabled=disabled||!status.previousVersion;
+  $('#kernel-server').disabled=kernelBusy;
+  $('#kernel-version').disabled=kernelBusy;
+}
+async function loadKernelVersions(){
+  const button=$('#kernel-reload');button.disabled=true;$('#kernel-error').textContent='';
+  try {
+    const data=await api('/api/xray/versions');kernelReleases=data.versions;
+    const previous=$('#kernel-version').value;
+    $('#kernel-version').innerHTML=kernelReleases.map(r=>`<option value="${esc(r.version)}">${esc(r.version)}${r.prerelease?' · 预发布':''}</option>`).join('');
+    if(kernelReleases.some(r=>r.version===previous))$('#kernel-version').value=previous;
+    else{const current='v'+(selectedKernelServer()?.xrayVersion?.split(' ')[1]||'');$('#kernel-version').value=kernelReleases.find(r=>r.version===current)?.version||kernelReleases.find(r=>!r.prerelease)?.version||kernelReleases[0]?.version||'';}
+  }catch(error){$('#kernel-error').textContent=error.message;if(!kernelReleases.length)$('#kernel-version').innerHTML='<option value="">读取失败，请重试</option>';}
+  finally{button.disabled=false;renderKernelStatus();}
+}
+$('#kernel-selector').addEventListener('click',async()=>{
+  try{
+    state=await api('/api/state');
+    if(!selectedKernelServer())kernelServerID=state.servers[0]?.id||'';
+    $('#kernel-server').innerHTML=state.servers.length?state.servers.map(s=>`<option value="${esc(s.id)}">${esc(s.name)} · ${esc(s.host)}</option>`).join(''):'<option value="">暂无服务器</option>';
+    $('#kernel-server').value=kernelServerID;$('#kernel-error').textContent='';$('#kernel-dialog').showModal();renderKernelStatus();await loadKernelVersions();
+  }catch(error){toast(error.message);}
+});
+$('#kernel-server').addEventListener('change',()=>{kernelServerID=$('#kernel-server').value;renderKernelStatus();});
+$('#kernel-version').addEventListener('change',renderKernelStatus);
+$('#kernel-reload').addEventListener('click',loadKernelVersions);
+async function changeKernel(action){
+  const s=selectedKernelServer();if(!s||kernelBusy)return;
+  const version=$('#kernel-version').value;
+  const prerelease=kernelReleases.find(r=>r.version===version)?.prerelease;
+  if(!confirm(`${s.name}：${action==='rollback'?'回滚到 '+s.kernel.previousVersion:'安装 '+version+(prerelease?'（预发布版本）':'')}？切换时会短暂中断代理连接。`))return;
+  kernelBusy=true;renderKernelStatus();$('#kernel-error').textContent='';
+  try{const task=await api(`/api/servers/${s.id}/kernel`,'POST',{action,version:action==='install'?version:''});s.kernelTask=task;toast('内核任务已下发，请等待 Agent 执行');}
+  catch(error){$('#kernel-error').textContent=error.message;}
+  finally{kernelBusy=false;renderKernelStatus();}
+}
+$('#kernel-install').addEventListener('click',()=>changeKernel('install'));
+$('#kernel-rollback').addEventListener('click',()=>changeKernel('rollback'));

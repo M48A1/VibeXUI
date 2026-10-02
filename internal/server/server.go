@@ -17,6 +17,7 @@ import (
 
 	"github.com/skip2/go-qrcode"
 	"golang.org/x/crypto/bcrypt"
+	"vibexui/internal/kernel"
 	"vibexui/internal/model"
 	"vibexui/internal/store"
 	"vibexui/internal/web"
@@ -24,6 +25,7 @@ import (
 
 type Options struct{ Username, Password, PublicURL, DownloadsDir string }
 type Server struct {
+	kernels                       *kernel.Catalog
 	telegram                      *telegramNotifier
 	credentialVersion             uint64
 	credentialAttempts            []time.Time
@@ -47,6 +49,7 @@ func New(db *store.Store, o Options) (*Server, error) {
 	s := &Server{store: db, publicURL: strings.TrimRight(o.PublicURL, "/"), secure: u.Scheme == "https", sessions: map[string]time.Time{}}
 	s.downloads = o.DownloadsDir
 	s.telegram = newTelegram(db, s.publicURL)
+	s.kernels = kernel.NewCatalog()
 	s.username, err = db.Setting("username")
 	if err != nil {
 		return nil, err
@@ -78,6 +81,8 @@ func New(db *store.Store, o Options) (*Server, error) {
 	mux.HandleFunc("GET /api/me", s.admin(s.accountInfo))
 	mux.HandleFunc("PUT /api/settings/account", s.admin(s.updateAccount))
 	mux.HandleFunc("GET /api/state", s.admin(s.state))
+	mux.HandleFunc("GET /api/xray/versions", s.admin(s.kernelVersions))
+	mux.HandleFunc("POST /api/servers/{id}/kernel", s.admin(s.changeKernel))
 	mux.HandleFunc("GET /api/notifications/telegram", s.admin(s.telegramGet))
 	mux.HandleFunc("PUT /api/notifications/telegram", s.admin(s.telegramSave))
 	mux.HandleFunc("POST /api/notifications/telegram/test", s.admin(s.telegramTest))
@@ -834,6 +839,10 @@ func (s *Server) poll(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "上报数据过长")
 		return
 	}
+	if !validKernelReport(in.Kernel) {
+		fail(w, 400, "内核状态无效")
+		return
+	}
 	if err := validateOnlineIPs(in.OnlineIPs); err != nil {
 		fail(w, 400, err.Error())
 		return
@@ -851,6 +860,8 @@ func (s *Server) poll(w http.ResponseWriter, r *http.Request) {
 		v.AppliedVersion = in.AppliedVersion
 		v.Running = in.Running
 		v.XrayVersion = in.XrayVersion
+		v.Kernel = in.Kernel
+		task.Kernel = v.KernelTask
 		v.Error = in.Error
 		v.Upload = in.Upload
 		v.Download = in.Download

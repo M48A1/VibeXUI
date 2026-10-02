@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"vibexui/internal/kernel"
 	"vibexui/internal/model"
 )
 
@@ -23,31 +24,38 @@ type Options struct {
 	Interval                                      time.Duration
 }
 type checkpoint struct {
-	IPBindings        []string                 `json:"ipBindings"`
-	Token             string                   `json:"token"`
-	Panel             string                   `json:"panel"`
-	ID                string                   `json:"id"`
-	Version           int64                    `json:"version"`
-	DesiredRunning    bool                     `json:"desiredRunning"`
-	Upload            uint64                   `json:"upload"`
-	Download          uint64                   `json:"download"`
-	LastUpload        uint64                   `json:"lastUpload"`
-	LastDownload      uint64                   `json:"lastDownload"`
-	StatsEpoch        string                   `json:"statsEpoch"`
-	NodeTraffic       map[string]model.Traffic `json:"nodeTraffic"`
-	LastNodeTraffic   map[string]model.Traffic `json:"lastNodeTraffic"`
-	ClientTraffic     map[string]model.Traffic `json:"clientTraffic"`
-	LastClientTraffic map[string]model.Traffic `json:"lastClientTraffic"`
+	Kernel                model.KernelReport       `json:"kernel"`
+	KernelPath            string                   `json:"kernelPath"`
+	PreviousKernelPath    string                   `json:"previousKernelPath"`
+	PreviousKernelVersion string                   `json:"previousKernelVersion"`
+	IPBindings            []string                 `json:"ipBindings"`
+	Token                 string                   `json:"token"`
+	Panel                 string                   `json:"panel"`
+	ID                    string                   `json:"id"`
+	Version               int64                    `json:"version"`
+	DesiredRunning        bool                     `json:"desiredRunning"`
+	Upload                uint64                   `json:"upload"`
+	Download              uint64                   `json:"download"`
+	LastUpload            uint64                   `json:"lastUpload"`
+	LastDownload          uint64                   `json:"lastDownload"`
+	StatsEpoch            string                   `json:"statsEpoch"`
+	NodeTraffic           map[string]model.Traffic `json:"nodeTraffic"`
+	LastNodeTraffic       map[string]model.Traffic `json:"lastNodeTraffic"`
+	ClientTraffic         map[string]model.Traffic `json:"clientTraffic"`
+	LastClientTraffic     map[string]model.Traffic `json:"lastClientTraffic"`
 }
 type Agent struct {
-	opts       Options
-	client     *http.Client
-	state      checkpoint
-	process    *exec.Cmd
-	done       chan error
-	lastError  string
-	statsError string
-	version    string
+	kernelDownload chan kernelResult
+	kernelCancel   context.CancelFunc
+	downloadKernel func(context.Context, string, string, string) (string, error)
+	opts           Options
+	client         *http.Client
+	state          checkpoint
+	process        *exec.Cmd
+	done           chan error
+	lastError      string
+	statsError     string
+	version        string
 }
 
 func New(o Options) (*Agent, error) {
@@ -71,7 +79,14 @@ func New(o Options) (*Agent, error) {
 	if err != nil {
 		return nil, fmt.Errorf("找不到 Xray-core：%w", err)
 	}
-	o.Xray = path
+	o.Xray, err = filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	o.Directory, err = filepath.Abs(o.Directory)
+	if err != nil {
+		return nil, err
+	}
 	o.Panel = strings.TrimRight(o.Panel, "/")
 	if err = os.MkdirAll(o.Directory, 0700); err != nil {
 		return nil, err
@@ -104,6 +119,16 @@ func New(o Options) (*Agent, error) {
 	}
 	if a.state.LastClientTraffic == nil {
 		a.state.LastClientTraffic = map[string]model.Traffic{}
+	}
+	a.downloadKernel = kernel.NewCatalog().Download
+	if a.state.KernelPath != "" {
+		if _, err = os.Stat(a.state.KernelPath); err != nil {
+			return nil, fmt.Errorf("已保存的内核文件不可用：%w", err)
+		}
+		a.opts.Xray = a.state.KernelPath
+	}
+	if a.state.Kernel.State == "downloading" || a.state.Kernel.State == "switching" {
+		a.kernelFailed(fmt.Errorf("上次切换因 Agent 重启而中断，已保留原内核，请重试"))
 	}
 	return a, nil
 }
@@ -384,11 +409,12 @@ func (a *Agent) cycle(ctx context.Context) error {
 	in := struct {
 		ID string `json:"id"`
 		model.Report
-	}{ID: a.opts.ID, Report: model.Report{OnlineIPs: onlineIPs, IPStatsError: limit(ipError, 900), AppliedVersion: a.state.Version, Running: a.running(), XrayVersion: limit(a.version, 180), Error: limit(a.lastError, 3500), Upload: a.state.Upload, Download: a.state.Download, StatsError: limit(a.statsError, 900), StatsEpoch: a.state.StatsEpoch, ClientTraffic: a.state.ClientTraffic, NodeTraffic: a.state.NodeTraffic}}
+	}{ID: a.opts.ID, Report: model.Report{Kernel: a.kernelReport(), OnlineIPs: onlineIPs, IPStatsError: limit(ipError, 900), AppliedVersion: a.state.Version, Running: a.running(), XrayVersion: limit(a.version, 180), Error: limit(a.lastError, 3500), Upload: a.state.Upload, Download: a.state.Download, StatsError: limit(a.statsError, 900), StatsEpoch: a.state.StatsEpoch, ClientTraffic: a.state.ClientTraffic, NodeTraffic: a.state.NodeTraffic}}
 	var task model.Task
 	if err := a.request(ctx, "/api/agent/poll", a.state.Token, in, &task); err != nil {
 		return err
 	}
+	defer func() { a.state.DesiredRunning = task.Running; a.handleKernel(ctx, task.Kernel) }()
 	if task.NodeIDs != nil {
 		valid := map[string]bool{}
 		for _, id := range task.NodeIDs {
@@ -483,6 +509,11 @@ func (a *Agent) Register(ctx context.Context) error {
 
 func (a *Agent) Run(ctx context.Context) error {
 	defer a.stop()
+	defer func() {
+		if a.kernelCancel != nil {
+			a.kernelCancel()
+		}
+	}()
 	if err := a.Register(ctx); err != nil {
 		return err
 	}

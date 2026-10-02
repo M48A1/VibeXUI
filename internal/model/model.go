@@ -17,6 +17,8 @@ import (
 )
 
 type Server struct {
+	KernelTask   *KernelTask         `json:"kernelTask,omitempty"`
+	Kernel       KernelReport        `json:"kernel"`
 	OnlineIPs    map[string][]string `json:"onlineIPs,omitempty"`
 	IPStatsAt    time.Time           `json:"ipStatsAt"`
 	IPStatsError string              `json:"ipStatsError"`
@@ -136,6 +138,7 @@ type State struct {
 	Clients []Client `json:"clients"`
 }
 type Report struct {
+	Kernel       KernelReport        `json:"kernel"`
 	NodeTraffic  map[string]Traffic  `json:"nodeTraffic,omitempty"`
 	OnlineIPs    map[string][]string `json:"onlineIPs"`
 	IPStatsError string              `json:"ipStatsError"`
@@ -151,6 +154,7 @@ type Report struct {
 	ClientTraffic  map[string]Traffic `json:"clientTraffic,omitempty"`
 }
 type Task struct {
+	Kernel     *KernelTask     `json:"kernel,omitempty"`
 	NodeIDs    []string        `json:"nodeIds"`
 	IPBindings []string        `json:"ipBindings"`
 	Version    int64           `json:"version"`

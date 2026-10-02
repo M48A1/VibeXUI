@@ -101,6 +101,7 @@ func reconcileClients(st *model.State, now time.Time) {
 }
 
 func (s *Server) RunMaintenance(ctx context.Context) {
+	go s.telegram.run(ctx)
 	tick := time.NewTicker(5 * time.Second)
 	defer tick.Stop()
 	for {

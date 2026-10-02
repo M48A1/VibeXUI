@@ -24,6 +24,7 @@ import (
 
 type Options struct{ Username, Password, PublicURL, DownloadsDir string }
 type Server struct {
+	telegram                      *telegramNotifier
 	store                         *store.Store
 	username, password, publicURL string
 	secure                        bool
@@ -43,6 +44,7 @@ func New(db *store.Store, o Options) (*Server, error) {
 	}
 	s := &Server{store: db, publicURL: strings.TrimRight(o.PublicURL, "/"), secure: u.Scheme == "https", sessions: map[string]time.Time{}}
 	s.downloads = o.DownloadsDir
+	s.telegram = newTelegram(db, s.publicURL)
 	s.username, err = db.Setting("username")
 	if err != nil {
 		return nil, err
@@ -78,6 +80,9 @@ func New(db *store.Store, o Options) (*Server, error) {
 		respond(w, 200, map[string]any{"username": s.username, "publicURL": s.publicURL})
 	}))
 	mux.HandleFunc("GET /api/state", s.admin(s.state))
+	mux.HandleFunc("GET /api/notifications/telegram", s.admin(s.telegramGet))
+	mux.HandleFunc("PUT /api/notifications/telegram", s.admin(s.telegramSave))
+	mux.HandleFunc("POST /api/notifications/telegram/test", s.admin(s.telegramTest))
 	mux.HandleFunc("POST /api/servers", s.admin(s.createServer))
 	mux.HandleFunc("PATCH /api/servers/{id}", s.admin(s.editServer))
 	mux.HandleFunc("DELETE /api/servers/{id}", s.admin(s.deleteServer))
@@ -197,6 +202,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 	err := bcrypt.CompareHashAndPassword([]byte(s.password), []byte(in.Password))
 	if subtle.ConstantTimeCompare([]byte(in.Username), []byte(s.username)) != 1 || err != nil {
+		s.notifyLogin(r, in.Username, false)
 		fail(w, 401, "用户名或密码错误")
 		return
 	}
@@ -214,6 +220,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	}
 	s.sessions[model.Hash(token)] = now.Add(12 * time.Hour)
 	s.mu.Unlock()
+	s.notifyLogin(r, in.Username, true)
 	http.SetCookie(w, &http.Cookie{Name: "vibexui_session", Value: token, Path: "/", HttpOnly: true, Secure: s.secure, SameSite: http.SameSiteStrictMode, MaxAge: 43200})
 	respond(w, 200, map[string]bool{"ok": true})
 }

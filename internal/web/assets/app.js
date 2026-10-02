@@ -4,6 +4,7 @@ const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;',
 const quote = value => "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
 let state = {servers:[], nodes:[], clients:[]}, page = 'overview', publicURL = '', editor = null, timer = null, loading = false, selectedIDs = new Set();
 const names = {
+  notifications:['外部通知','通过 Telegram 接收运行状态、到期及流量提醒。','外部通知'],
   overview:['服务器总览','让服务器、入站和用户保持连接。','总览'],
   servers:['服务器','安装一个 Agent，在这里管理每一台 VPS。','服务器'],
   nodes:['入站','选择服务器，配置 VLESS + REALITY 入站。','入站节点'],
@@ -36,6 +37,7 @@ async function enter() {
   if (!timer) timer = setInterval(() => refresh().catch(e => {if (!$('#app').hidden) toast(e.message);}), 10000);
 }
 async function refresh() {
+  if (page === 'notifications') {await refreshTelegramStatus(); return;}
   if (loading) return;
   loading = true; $('#refresh-button').disabled = true;
   try {
@@ -125,6 +127,9 @@ function render() {
   const [title,description,crumb]=names[page];
   $('#page-title').textContent=title; $('#page-description').textContent=description; $('#crumb').textContent=crumb;
   document.querySelectorAll('[data-page]').forEach(b=>b.classList.toggle('active',b.dataset.page===page));
+  const notifications=page==='notifications';
+  $('#add-button').hidden=notifications; $('#metrics').hidden=notifications; $('.list-toolbar').hidden=notifications; $('#overview-guide').hidden=notifications;
+  if(notifications){if(!$('#telegram-form'))loadTelegramSettings();return;}
   $('#add-button').textContent=page==='clients'?'＋ 添加用户':page==='nodes'?'＋ 添加入站':'＋ 添加服务器';
   $('#export-button').hidden=page!=='clients'; $('#batch-button').hidden=page!=='clients'; $('#import-button').hidden=page!=='nodes'; $('#cleanup-button').hidden=page!=='clients'; $('#group-filter').hidden=page!=='clients';
   const groupValue=$('#group-filter').value; $('#group-filter').innerHTML='<option value="">所有分组</option>'+[...new Set(state.clients.map(c=>c.group).filter(Boolean))].sort().map(g=>`<option value="${esc(g)}">${esc(g)}</option>`).join(''); $('#group-filter').value=groupValue; if($('#group-filter').selectedIndex<0)$('#group-filter').selectedIndex=0;
@@ -382,3 +387,75 @@ document.addEventListener('click',async event=>{
   finally {button.disabled=false;}
 });
 enter().catch(error=>{showLogin(); if(error.message!=='请先登录') $('#login-error').textContent=error.message;});
+
+
+function telegramStatus(data) {
+  const el=$('#telegram-status');if(!el)return;
+  const status=data.status;
+  el.textContent=`最近尝试：${date(status.lastAttempt)} · 最近成功：${date(status.lastSuccess)}${status.lastError?' · '+status.lastError:''}`;
+}
+async function refreshTelegramStatus() {
+  const data=await api('/api/notifications/telegram');
+  if(page==='notifications')telegramStatus(data);
+}
+async function loadTelegramSettings() {
+  $('#workspace').innerHTML='<div class="notice">正在读取通知设置…</div>';
+  try {
+    const data=await api('/api/notifications/telegram');if(page!=='notifications')return;
+    const c=data.settings;
+    const check=(name,label)=>`<label class="checkbox"><input type="checkbox" name="${name}" ${c[name]?'checked':''}><span>${label}</span></label>`;
+    $('#workspace').innerHTML=`<form id="telegram-form" class="panel notification-panel">
+      <div class="panel-title"><h2>Telegram Bot</h2><span>仅向下方指定的接收者发送通知</span></div>
+      <div class="notification-body">
+        ${check('enabled','启用自动通知')}
+        <div class="notification-grid">
+          <label>Bot Token<input name="token" type="password" autocomplete="new-password" maxlength="121" placeholder="${data.hasToken?'已保存，留空保留现有 Token':'填写 BotFather 提供的 Token'}"><small>Token 保存后不回显。</small></label>
+          <label>接收 Chat ID<input name="chatIds" value="${esc(c.chatIds.join(', '))}" placeholder="123456789, -1001234567890"><small>最多 10 个，以逗号分隔；支持个人和群组。</small></label>
+        </div>
+        <label class="checkbox"><input type="checkbox" name="clearToken"><span>删除已保存的 Token（需关闭自动通知）</span></label>
+        <h3>通知内容</h3>
+        <div class="notification-grid notification-options">
+          ${check('login','管理员登录成功 / 失败（账号、来源 IP）')}
+          ${check('servers','服务器离线 / 恢复（离线超过 60 秒）')}
+          ${check('xray','Xray 运行或配置异常 / 恢复')}
+          ${check('ipLimit','客户端在线 IP 数超限')}
+          ${check('expiry','用户和入站即将到期 / 已到期')}
+          ${check('traffic','用户和入站剩余流量不足 / 用尽')}
+        </div>
+        <div class="notification-grid">
+          <label>提前几天提醒到期<input name="expiryDays" type="number" min="0" max="365" value="${c.expiryDays}" required><small>0 表示仅提醒已到期。</small></label>
+          <label>剩余流量预警（GiB）<input name="remainingGB" type="number" min="0" max="1048576" step="0.01" value="${c.remainingGB}" required><small>0 表示仅提醒额度用尽。</small></label>
+        </div>
+        <h3>定期报告</h3>
+        ${check('daily','每日发送服务器状态、用户数量和累计流量报告')}
+        <div class="notification-grid">
+          <label>发送时间<input name="reportTime" type="time" value="${esc(c.reportTime)}" required></label>
+          <label>时区<input name="timezone" value="${esc(c.timezone)}" placeholder="Asia/Shanghai" required></label>
+        </div>
+        <p class="hint">报告到点后发送，面板重启会补发当日尚未发送的报告。流量为累计值。自动通知每 30 秒检查，重复告警合并，失败后重试；登录事件最多保留一小时。这里只配置通知，不提供 Telegram 远程管理命令。</p>
+        <div class="notice">先在 Telegram 向 @BotFather 发送 /newbot 创建机器人，再向你的机器人发送 /start。群组接收需先将机器人加入群组并允许发消息。请先保存，再发送测试通知。</div>
+        <p id="telegram-status" class="hint" role="status"></p>
+        <p id="telegram-error" class="error" role="alert"></p>
+        <div class="actions"><button class="primary" type="submit">保存设置</button><button type="button" id="telegram-test">发送测试通知</button></div>
+        <pre id="telegram-test-results" role="status"></pre>
+      </div>
+    </form>`;
+    telegramStatus(data);
+    $('#telegram-form').addEventListener('submit',saveTelegramSettings);
+    $('#telegram-test').addEventListener('click',testTelegramSettings);
+  } catch(error) {if(page==='notifications')$('#workspace').innerHTML=`<div class="notice">${esc(error.message)}<button type="button" data-page="notifications">重新加载</button></div>`;}
+}
+async function saveTelegramSettings(event) {
+  event.preventDefault();const form=event.currentTarget,fd=new FormData(form),button=form.querySelector('[type=submit]');button.disabled=true;$('#telegram-error').textContent='';
+  const data={};for(const name of ['enabled','login','servers','xray','expiry','traffic','ipLimit','daily','clearToken'])data[name]=fd.has(name);
+  for(const name of ['token','reportTime','timezone'])data[name]=fd.get(name).trim();
+  for(const name of ['expiryDays','remainingGB'])data[name]=Number(fd.get(name));
+  data.chatIds=fd.get('chatIds').split(/[,，\s]+/).filter(Boolean);
+  try {await api('/api/notifications/telegram','PUT',data);form.elements.token.value='';toast('通知设置已保存');if(page==='notifications')await loadTelegramSettings();}
+  catch(error){if($('#telegram-error'))$('#telegram-error').textContent=error.message;}finally{button.disabled=false;}
+}
+async function testTelegramSettings() {
+  const button=$('#telegram-test'),output=$('#telegram-test-results');button.disabled=true;output.textContent='正在向已保存的 Chat ID 发送测试通知…';
+  try {const data=await api('/api/notifications/telegram/test','POST',{});output.textContent=data.results.map(r=>`${r.chatId}：${r.result}`).join('\n');await refreshTelegramStatus();}
+  catch(error){output.textContent=error.message;}finally{button.disabled=false;}
+}

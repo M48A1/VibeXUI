@@ -17,6 +17,7 @@ import (
 	"time"
 	"vibexui/internal/kernel"
 	"vibexui/internal/model"
+	"vibexui/internal/snell"
 )
 
 type Options struct {
@@ -46,6 +47,7 @@ type checkpoint struct {
 	LastClientTraffic     map[string]model.Traffic `json:"lastClientTraffic"`
 }
 type Agent struct {
+	snell          *snell.Manager
 	saved          []byte
 	failedVersion  int64
 	retryAt        time.Time
@@ -459,10 +461,13 @@ func (a *Agent) cycle(ctx context.Context) error {
 	in := struct {
 		ID string `json:"id"`
 		model.Report
-	}{ID: a.opts.ID, Report: model.Report{StatsCollectedAt: a.statsAt, IPCollectedAt: a.ipAt, Kernel: a.kernelReport(), OnlineIPs: onlineIPs, IPStatsError: limit(ipError, 900), AppliedVersion: a.state.Version, Running: a.running(), XrayVersion: limit(a.version, 180), Error: limit(a.lastError, 3500), Upload: a.state.Upload, Download: a.state.Download, StatsError: limit(a.statsError, 900), StatsEpoch: a.state.StatsEpoch, ClientTraffic: a.state.ClientTraffic, NodeTraffic: a.state.NodeTraffic}}
+	}{ID: a.opts.ID, Report: model.Report{SnellSupported: snell.Supported(), SnellStatus: a.snellStatus(), StatsCollectedAt: a.statsAt, IPCollectedAt: a.ipAt, Kernel: a.kernelReport(), OnlineIPs: onlineIPs, IPStatsError: limit(ipError, 900), AppliedVersion: a.state.Version, Running: a.running(), XrayVersion: limit(a.version, 180), Error: limit(a.lastError, 3500), Upload: a.state.Upload, Download: a.state.Download, StatsError: limit(a.statsError, 900), StatsEpoch: a.state.StatsEpoch, ClientTraffic: a.state.ClientTraffic, NodeTraffic: a.state.NodeTraffic}}
 	var task model.Task
 	if err := a.request(ctx, "/api/agent/poll", a.state.Token, in, &task); err != nil {
 		return err
+	}
+	if a.snell != nil {
+		a.snell.Submit(task.Snell)
 	}
 	defer func() { a.state.DesiredRunning = task.Running; a.handleKernel(ctx, task.Kernel) }()
 	if task.NodeIDs != nil {
@@ -586,6 +591,8 @@ func (a *Agent) Run(ctx context.Context) error {
 	if err := a.Register(ctx); err != nil {
 		return err
 	}
+	a.snell = snell.New(ctx, a.opts.Directory)
+	defer a.snell.Close()
 	out, err := a.command(ctx, "version")
 	if err == nil {
 		a.version = strings.Split(string(out), "\n")[0]
@@ -605,4 +612,11 @@ func (a *Agent) Run(ctx context.Context) error {
 		case <-ticker.C:
 		}
 	}
+}
+
+func (a *Agent) snellStatus() map[string]model.SnellStatus {
+	if a.snell == nil {
+		return nil
+	}
+	return a.snell.Status()
 }
